@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.1
+// @version      1.0.2
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -26,6 +26,7 @@
     const STORAGE_KEY = 'wme_auto_unit_switcher_country_rules_v2';
     const COUNTRY_NAMES_STORAGE_KEY = 'wme_auto_unit_switcher_country_names';
     const GLOBAL_MULTI_UNIT_KEY = 'wme_auto_unit_switcher_global_multi_unit';
+    const RESET_1_0_2_KEY = 'wme_auto_unit_switcher_reset_1_0_2';
     const LEGACY_V1_STORAGE_KEY = 'wme_auto_unit_switcher_country_rules';
     const LEGACY_UK_HYBRID_KEY = 'wme_auto_unit_switcher_uk_hybrid';
 
@@ -40,7 +41,7 @@
     // Default Country Rules: { unit: 'imperial' | 'metric', multiUnit: boolean }
     const DEFAULT_COUNTRY_RULES = {
         235: { unit: 'imperial', multiUnit: false }, // United States
-        234: { unit: 'imperial', multiUnit: true },  // United Kingdom (ft + yd/m)
+        234: { unit: 'imperial', multiUnit: false },  // United Kingdom (ft + yd/m)
         182: { unit: 'imperial', multiUnit: false }, // Puerto Rico
         88:  { unit: 'imperial', multiUnit: false }, // Guam
         236: { unit: 'imperial', multiUnit: false }  // U.S. Virgin Islands
@@ -106,7 +107,7 @@
     let countryRules = new Map();
     // Map<number, string>
     let cachedCountryNames = new Map();
-    let globalMultiUnit = false;
+    let globalMultiUnit = true;
     let lastCountryId = null;
     let activeCountryId = null;
     let multiUnitObserver = null;
@@ -114,6 +115,10 @@
 
     function getDisplayName() {
         return (SCRIPT_NAME && SCRIPT_NAME.trim()) || (typeof GM_info !== 'undefined' && GM_info.script.name) || 'WME Auto Unit Switcher';
+    }
+
+    function getScriptVersion() {
+        return (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.0.2';
     }
 
     function getScriptId() {
@@ -137,9 +142,29 @@
     }
 
     function loadSettings() {
+        let shouldResetDefaults = false;
+
+        try {
+            if (localStorage.getItem(RESET_1_0_2_KEY) !== 'true') {
+                shouldResetDefaults = true;
+                localStorage.setItem(RESET_1_0_2_KEY, 'true');
+            }
+        } catch (e) {
+            console.error(`${getDisplayName()}: Error checking reset flag.`, e);
+        }
+
         cachedCountryNames = new Map(
             Object.entries(WAZE_COUNTRY_NAMES).map(([id, name]) => [parseInt(id, 10), name])
         );
+
+        if (shouldResetDefaults) {
+            countryRules = new Map(
+                Object.entries(DEFAULT_COUNTRY_RULES).map(([id, cfg]) => [parseInt(id, 10), { ...cfg }])
+            );
+            globalMultiUnit = true;
+            saveSettings();
+            return;
+        }
 
         try {
             const savedNames = localStorage.getItem(COUNTRY_NAMES_STORAGE_KEY);
@@ -457,7 +482,7 @@
         if (hasWazeWrap && updateMessage && updateMessage.trim() !== "") {
             WazeWrap.Interface.ShowScriptUpdate(
                 displayName,
-                typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-13',
+                getScriptVersion(),
                 updateMessage,
                 USERSCRIPT_URL || "https://github.com/Thynamelessone/WME-AutoUnitSwitcher",
                 ""
@@ -938,7 +963,7 @@
     // --- UI & Sidebar Registration (SDK) ---
 
     function buildUIElement(displayName) {
-        const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-13';
+        const version = getScriptVersion();
 
         const container = document.createElement('div');
         container.id = 'wme-aus-container';
@@ -956,7 +981,7 @@
                 <input type="checkbox" id="wme-aus-global-multi-chk" ${globalMultiUnit ? 'checked' : ''} />
                 <span>
                     <b>Show Multiple Units Globally</b><br>
-                    <small style="color: var(--aus-muted);">Show <code>(yd / m)</code> or <code>(yd / ft)</code> in all countries and hide per-country toggles.</small>
+                    <small style="display: block; color: var(--aus-muted); text-wrap: wrap;">Show <code>(yd / m)</code> or <code>(yd / ft)</code> in all countries.</small>
                 </span>
             </label>
 
@@ -1036,8 +1061,8 @@
             countryRules = new Map(
                 Object.entries(DEFAULT_COUNTRY_RULES).map(([id, cfg]) => [parseInt(id, 10), { ...cfg }])
             );
-            globalMultiUnit = false;
-            globalMultiChk.checked = false;
+            globalMultiUnit = true;
+            globalMultiChk.checked = true;
             saveSettings();
             refreshCountryListUI(container);
             checkAndSetUnits(true);
