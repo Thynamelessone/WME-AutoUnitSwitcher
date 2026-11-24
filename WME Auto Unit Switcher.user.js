@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.1.beta-1
+// @version      1.0.1.beta-2
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -344,7 +344,6 @@
         const lowerQuery = query.toLowerCase();
         const allEntries = Array.from(cachedCountryNames.entries());
 
-        // Prefer exact match first (pick highest canonical ID if aliases exist, e.g., 73 for France)
         const exactMatches = allEntries
             .filter(([, name]) => name.toLowerCase() === lowerQuery)
             .sort((a, b) => b[0] - a[0]);
@@ -352,7 +351,6 @@
             return { id: exactMatches[0][0], name: exactMatches[0][1] };
         }
 
-        // Next prefer starts-with match
         const prefixMatches = allEntries
             .filter(([, name]) => name.toLowerCase().startsWith(lowerQuery))
             .sort((a, b) => a[1].length - b[1].length || b[0] - a[0]);
@@ -360,7 +358,6 @@
             return { id: prefixMatches[0][0], name: prefixMatches[0][1] };
         }
 
-        // Finally substring match
         const partialMatches = allEntries
             .filter(([, name]) => name.toLowerCase().includes(lowerQuery))
             .sort((a, b) => a[1].length - b[1].length || b[0] - a[0]);
@@ -371,13 +368,28 @@
         return null;
     }
 
-    function populateCountryDatalist(datalistEl) {
+    function updateCountryDatalist(datalistEl, rawQuery) {
         if (!datalistEl) return;
-        const sorted = Array.from(cachedCountryNames.entries())
-            .filter(([, name]) => isValidCountryName(name))
-            .sort((a, b) => a[1].localeCompare(b[1]) || a[0] - b[0]);
+        const query = (rawQuery || '').trim().toLowerCase();
 
-        datalistEl.innerHTML = sorted
+        // Keep datalist empty until the user actually starts typing
+        if (!query) {
+            datalistEl.innerHTML = '';
+            return;
+        }
+
+        const matches = Array.from(cachedCountryNames.entries())
+            .filter(([id, name]) => {
+                if (!isValidCountryName(name)) return false;
+                return name.toLowerCase().includes(query) || String(id).startsWith(query);
+            })
+            .sort((a, b) => {
+                const aStarts = a[1].toLowerCase().startsWith(query) ? 0 : 1;
+                const bStarts = b[1].toLowerCase().startsWith(query) ? 0 : 1;
+                return aStarts - bStarts || a[1].localeCompare(b[1]) || a[0] - b[0];
+            });
+
+        datalistEl.innerHTML = matches
             .map(([id, name]) => `<option value="${name} (${id})"></option>`)
             .join('');
     }
@@ -445,7 +457,7 @@
         if (hasWazeWrap && updateMessage && updateMessage.trim() !== "") {
             WazeWrap.Interface.ShowScriptUpdate(
                 displayName,
-                typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-12',
+                typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-13',
                 updateMessage,
                 USERSCRIPT_URL || "https://github.com/Thynamelessone/WME-AutoUnitSwitcher",
                 ""
@@ -926,7 +938,7 @@
     // --- UI & Sidebar Registration (SDK) ---
 
     function buildUIElement(displayName) {
-        const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-12';
+        const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-13';
 
         const container = document.createElement('div');
         container.id = 'wme-aus-container';
@@ -949,7 +961,7 @@
             </label>
 
             <div class="wme-aus-input-row">
-                <input type="text" id="wme-aus-add-id" list="wme-aus-country-datalist" placeholder="Country name or ID (e.g. France or 73)" />
+                <input type="text" id="wme-aus-add-id" list="wme-aus-country-datalist" placeholder="Country name or ID" />
                 <datalist id="wme-aus-country-datalist"></datalist>
                 <select id="wme-aus-add-unit" title="Unit system for this country">
                     <option value="imperial">Imperial</option>
@@ -978,8 +990,6 @@
         const addUnitSelect = container.querySelector('#wme-aus-add-unit');
         const resetBtn = container.querySelector('#wme-aus-reset-btn');
 
-        populateCountryDatalist(countryDatalist);
-
         globalMultiChk.addEventListener('change', (e) => {
             globalMultiUnit = e.target.checked;
             saveSettings();
@@ -993,6 +1003,7 @@
 
         addInput.addEventListener('input', () => {
             addInput.classList.remove('wme-aus-input-error');
+            updateCountryDatalist(countryDatalist, addInput.value);
         });
 
         const handleAddCountry = () => {
@@ -1007,6 +1018,7 @@
                 });
                 saveSettings();
                 addInput.value = '';
+                countryDatalist.innerHTML = '';
                 addInput.classList.remove('wme-aus-input-error');
                 refreshCountryListUI(container);
                 checkAndSetUnits(true);
@@ -1103,7 +1115,10 @@
         });
 
         if (cacheLoadedCountryNames()) {
-            populateCountryDatalist(root.querySelector('#wme-aus-country-datalist'));
+            const inputEl = root.querySelector('#wme-aus-add-id');
+            if (inputEl && inputEl.value.trim()) {
+                updateCountryDatalist(root.querySelector('#wme-aus-country-datalist'), inputEl.value);
+            }
         }
 
         const knownCountries = new Map();
