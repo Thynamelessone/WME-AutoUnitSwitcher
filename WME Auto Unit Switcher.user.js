@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.0.beta-3
+// @version      1.0.0.beta-4
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -9,8 +9,8 @@
 // @exclude      https://www.waze.com/*user/*editor/*
 // @grant        none
 // @require      https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
-// @downloadURL  
-// @updateURL    
+// @downloadURL  https://github.com/Thynamelessone/WME-AutoUnitSwitcher/raw/refs/heads/beta/WME%20Auto%20Unit%20Switcher.user.js
+// @updateURL    https://github.com/Thynamelessone/WME-AutoUnitSwitcher/raw/refs/heads/beta/WME%20Auto%20Unit%20Switcher.user.js
 // ==/UserScript==
 
 (function () {
@@ -20,7 +20,7 @@
     const SCRIPT_NAME = "WME Auto Unit Switcher";
     const updateMessage = "";
 
-        const STORAGE_KEY = 'wme_auto_unit_switcher_imperial_ids';
+    const STORAGE_KEY = 'wme_auto_unit_switcher_imperial_ids';
 
     // 64x64 inline SVG ruler icon for WME Studio's script bar
     const SCRIPT_ICON_DATA_URL = 'data:image/svg+xml;utf8,' + encodeURIComponent(
@@ -34,6 +34,7 @@
     // 235 = United States, 234 = United Kingdom, 182 = Puerto Rico, 88 = Guam, 236 = US Virgin Islands
     const DEFAULT_IMPERIAL_IDS = [235, 234, 182, 88, 236];
 
+    let sdk = null;
     let imperialCountryIds = new Set();
     let lastCountryId = null;
 
@@ -70,32 +71,59 @@
         }
     }
 
-    function bootstrap(tries = 1) {
-        if (typeof W !== 'undefined' && W.map && W.model && W.prefs && W.userscripts &&
-            typeof WazeWrap !== 'undefined' && WazeWrap.Ready) {
-            init();
-        } else if (tries < 1000) {
-            setTimeout(() => bootstrap(++tries), 200);
+    // --- SDK & WazeWrap Bootstrap ---
+
+    function bootstrap() {
+        if (typeof getWmeSdk === 'function') {
+            initSdk();
+        } else if (window.SDK_INITIALIZED) {
+            window.SDK_INITIALIZED.then(initSdk);
         } else {
-            console.error(`${getDisplayName()}: WazeWrap failed to load.`);
+            window.addEventListener('wme-initialized', initSdk, { once: true });
         }
     }
 
-    function init() {
+    async function initSdk() {
+        try {
+            sdk = getWmeSdk({
+                scriptId: getScriptId(),
+                scriptName: getDisplayName()
+            });
+
+            await sdk.Events.once({ eventName: 'wme-ready' });
+            waitForWazeWrap();
+        } catch (err) {
+            console.error(`${getDisplayName()}: Failed to initialize WME SDK.`, err);
+        }
+    }
+
+    function waitForWazeWrap(tries = 1) {
+        if (typeof WazeWrap !== 'undefined' && WazeWrap.Ready) {
+            init();
+        } else if (tries < 100) {
+            setTimeout(() => waitForWazeWrap(++tries), 200);
+        } else {
+            // Proceed even if WazeWrap fails so the script isn't blocked
+            console.warn(`${getDisplayName()}: WazeWrap did not load in time, continuing with SDK only.`);
+            init(false);
+        }
+    }
+
+    async function init(hasWazeWrap = true) {
         const displayName = getDisplayName();
-        const scriptId = getScriptId();
 
         loadSettings();
         injectStudioStyles();
-        registerSidebarTab(scriptId, displayName);
+        await registerSidebarTab(displayName);
 
-        W.map.events.register('moveend', null, onMapUpdate);
-        W.model.events.register('mergeend', null, onMapUpdate);
+        // Register SDK events for map movement and map data loading
+        sdk.Events.on({ eventName: 'wme-map-move-end', eventHandler: onMapUpdate });
+        sdk.Events.on({ eventName: 'wme-map-data-loaded', eventHandler: onMapUpdate });
 
-        if (updateMessage && updateMessage.trim() !== "") {
+        if (hasWazeWrap && updateMessage && updateMessage.trim() !== "") {
             WazeWrap.Interface.ShowScriptUpdate(
                 displayName,
-                typeof GM_info !== 'undefined' ? GM_info.script.version : '1.3.2',
+                typeof GM_info !== 'undefined' ? GM_info.script.version : '2.0.0',
                 updateMessage,
                 USERSCRIPT_URL || "https://greasyfork.org/",
                 ""
@@ -103,7 +131,7 @@
         }
 
         onMapUpdate();
-        console.log(`${displayName}: Initialized.`);
+        console.log(`${displayName}: Initialized with WME SDK.`);
     }
 
     // --- WME Studio Theme-Aware CSS (with full fallbacks) ---
@@ -270,7 +298,7 @@
         document.head.appendChild(style);
     }
 
-    // --- Core Unit Switching Logic ---
+    // --- Core Unit Switching Logic (SDK) ---
 
     function onMapUpdate() {
         checkAndSetUnits();
@@ -278,30 +306,33 @@
     }
 
     function checkAndSetUnits(force = false) {
-        if (!W.model.countries || !W.model.getTopCountry) return;
+        if (!sdk) return;
 
-        const topCountry = W.model.getTopCountry();
+        const topCountry = sdk.DataModel.Countries.getTopCountry();
         if (!topCountry) return;
 
-        const countryId = topCountry.attributes.id;
+        const countryId = topCountry.id;
 
         if (!force && countryId === lastCountryId) return;
         lastCountryId = countryId;
 
         const shouldBeImperial = imperialCountryIds.has(countryId);
-        const isCurrentlyImperial = W.prefs.get('isImperial');
+        const prefs = sdk.Settings.getUserSettings();
+        const isCurrentlyImperial = Boolean(prefs && prefs.isImperial);
 
         if (shouldBeImperial !== isCurrentlyImperial) {
-            setWMEUnits(shouldBeImperial, topCountry.attributes.name);
+            setWMEUnits(shouldBeImperial, topCountry.name);
         } else {
-            updateStatusBanner(topCountry.attributes.name, shouldBeImperial);
+            updateStatusBanner(topCountry.name, shouldBeImperial);
         }
     }
 
     function setWMEUnits(useImperial, countryName) {
         try {
-            W.prefs.set('isImperial', useImperial);
+            // Update user preferences directly via the WME SDK
+            sdk.Settings.setUserSettings({ isImperial: useImperial });
 
+            // Keep the native Settings UI radio button in sync if rendered
             const targetId = useImperial ? 'prefs-unit-imperial' : 'prefs-unit-metric';
             const radioBtn = document.getElementById(targetId);
             if (radioBtn && !radioBtn.checked) {
@@ -316,11 +347,11 @@
         }
     }
 
-    // --- UI & Sidebar Registration ---
+    // --- UI & Sidebar Registration (SDK) ---
 
-    function registerSidebarTab(scriptId, displayName) {
+    async function registerSidebarTab(displayName) {
         try {
-            const { tabLabel, tabPane } = W.userscripts.registerSidebarTab(scriptId);
+            const { tabLabel, tabPane } = await sdk.Sidebar.registerScriptTab();
 
             tabLabel.innerText = 'Auto Units';
             tabLabel.title = `${displayName} Settings`;
@@ -330,7 +361,7 @@
                 tabLabel.dataset.userscriptUrl = USERSCRIPT_URL;
             }
 
-            const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '1.3.2';
+            const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '2.0.0';
 
             const container = document.createElement('div');
             container.id = 'wme-aus-container';
@@ -362,6 +393,7 @@
                 </div>
             `;
 
+            tabPane.innerHTML = '';
             tabPane.appendChild(container);
 
             const addBtn = container.querySelector('#wme-aus-add-btn');
@@ -391,12 +423,12 @@
             });
 
             refreshCountryListUI(container);
-            const topCountry = W.model.getTopCountry && W.model.getTopCountry();
+            const topCountry = sdk.DataModel.Countries.getTopCountry();
             if (topCountry) {
-                updateStatusBanner(topCountry.attributes.name, imperialCountryIds.has(topCountry.attributes.id), container);
+                updateStatusBanner(topCountry.name, imperialCountryIds.has(topCountry.id), container);
             }
         } catch (err) {
-            console.error(`${displayName}: Error registering sidebar tab.`, err);
+            console.error(`${displayName}: Error registering SDK sidebar tab.`, err);
         }
     }
 
@@ -409,14 +441,15 @@
 
     function refreshCountryListUI(root = document) {
         const listContainer = root.querySelector('#wme-aus-country-list');
-        if (!listContainer || !W.model || !W.model.countries) return;
+        if (!listContainer || !sdk) return;
 
         const knownCountries = new Map();
 
-        const modelObjects = W.model.countries.getObjectArray ? W.model.countries.getObjectArray() : Object.values(W.model.countries.objects || {});
-        modelObjects.forEach(c => {
-            if (c && c.attributes) {
-                knownCountries.set(c.attributes.id, c.attributes.name);
+        // Retrieve all countries currently loaded in SDK DataModel
+        const loadedCountries = sdk.DataModel.Countries.getAll() || [];
+        loadedCountries.forEach(c => {
+            if (c && typeof c.id === 'number') {
+                knownCountries.set(c.id, c.name);
             }
         });
 
