@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.0.beta-6
+// @version      1.0.0.beta-7
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -23,7 +23,8 @@
     const updateMessage = "";
     const USERSCRIPT_URL = "";
 
-    const STORAGE_KEY = 'wme_auto_unit_switcher_imperial_ids';
+    const STORAGE_KEY = 'wme_auto_unit_switcher_country_rules';
+    const LEGACY_STORAGE_KEY = 'wme_auto_unit_switcher_imperial_ids';
 
     // 64x64 inline SVG ruler icon for WME Studio's script bar
     const SCRIPT_ICON_DATA_URL = 'data:image/svg+xml;utf8,' + encodeURIComponent(
@@ -33,12 +34,27 @@
         '</svg>'
     );
 
-    // Default Imperial Country IDs:
-    // 235 = United States, 234 = United Kingdom, 182 = Puerto Rico, 88 = Guam, 236 = US Virgin Islands
-    const DEFAULT_IMPERIAL_IDS = [235, 234, 182, 88, 236];
+    // Default Country Rules ('imperial' | 'metric')
+    // Unlisted countries fall back to 'metric'
+    const DEFAULT_COUNTRY_RULES = {
+        235: 'imperial', // United States
+        234: 'imperial', // United Kingdom
+        182: 'imperial', // Puerto Rico
+        88: 'imperial',  // Guam
+        236: 'imperial'  // U.S. Virgin Islands
+    };
+
+    const FALLBACK_NAMES = {
+        235: 'United States',
+        234: 'United Kingdom',
+        182: 'Puerto Rico',
+        88: 'Guam',
+        236: 'U.S. Virgin Islands'
+    };
 
     let sdk = null;
-    let imperialCountryIds = new Set();
+    // Map<number, 'imperial' | 'metric'>
+    let countryUnitRules = new Map();
     let lastCountryId = null;
 
     function getDisplayName() {
@@ -55,23 +71,56 @@
             const saved = localStorage.getItem(STORAGE_KEY);
             if (saved) {
                 const parsed = JSON.parse(saved);
-                if (Array.isArray(parsed)) {
-                    imperialCountryIds = new Set(parsed);
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                    const map = new Map();
+                    Object.entries(parsed).forEach(([idStr, unit]) => {
+                        const id = parseInt(idStr, 10);
+                        if (!isNaN(id) && (unit === 'imperial' || unit === 'metric')) {
+                            map.set(id, unit);
+                        }
+                    });
+                    countryUnitRules = map;
+                    return;
+                }
+            }
+
+            // Migrate legacy v1 imperial-only array if present
+            const legacySaved = localStorage.getItem(LEGACY_STORAGE_KEY);
+            if (legacySaved) {
+                const legacyParsed = JSON.parse(legacySaved);
+                if (Array.isArray(legacyParsed)) {
+                    const map = new Map();
+                    legacyParsed.forEach(id => {
+                        if (typeof id === 'number') map.set(id, 'imperial');
+                    });
+                    countryUnitRules = map;
+                    saveSettings();
                     return;
                 }
             }
         } catch (e) {
             console.error(`${getDisplayName()}: Error loading settings, using defaults.`, e);
         }
-        imperialCountryIds = new Set(DEFAULT_IMPERIAL_IDS);
+
+        countryUnitRules = new Map(
+            Object.entries(DEFAULT_COUNTRY_RULES).map(([id, unit]) => [parseInt(id, 10), unit])
+        );
     }
 
     function saveSettings() {
         try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(imperialCountryIds)));
+            const obj = {};
+            countryUnitRules.forEach((unit, id) => {
+                obj[id] = unit;
+            });
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
         } catch (e) {
             console.error(`${getDisplayName()}: Error saving settings.`, e);
         }
+    }
+
+    function getUnitForCountry(countryId) {
+        return countryUnitRules.get(countryId) || 'metric';
     }
 
     // --- SDK & WazeWrap Bootstrap ---
@@ -126,7 +175,7 @@
         if (hasWazeWrap && updateMessage && updateMessage.trim() !== "") {
             WazeWrap.Interface.ShowScriptUpdate(
                 displayName,
-                typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-5',
+                typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-6',
                 updateMessage,
                 USERSCRIPT_URL || "https://github.com/Thynamelessone/WME-AutoUnitSwitcher",
                 ""
@@ -198,18 +247,29 @@
 
             .wme-aus-input-row {
                 display: flex;
-                gap: 6px;
+                gap: 5px;
                 margin-bottom: 10px;
             }
 
             #wme-aus-add-id {
                 flex: 1;
+                min-width: 0;
                 padding: 4px 6px;
                 background: var(--aus-input);
                 color: var(--aus-text);
                 border: 1px solid var(--aus-border);
                 border-radius: var(--aus-radius);
                 font-size: 12px;
+            }
+
+            #wme-aus-add-unit {
+                padding: 4px 6px;
+                background: var(--aus-input);
+                color: var(--aus-text);
+                border: 1px solid var(--aus-border);
+                border-radius: var(--aus-radius);
+                font-size: 12px;
+                cursor: pointer;
             }
 
             #wme-aus-add-btn {
@@ -221,6 +281,7 @@
                 cursor: pointer;
                 font-size: 12px;
                 font-weight: 600;
+                white-space: nowrap;
             }
 
             .wme-aus-section-title {
@@ -245,12 +306,12 @@
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
+                gap: 6px;
                 padding: 5px 8px;
                 background: var(--aus-input);
                 color: var(--aus-text);
                 border: 1px solid var(--aus-border);
                 border-radius: var(--aus-radius);
-                cursor: pointer;
                 margin: 0;
                 font-weight: normal;
                 transition: background-color 0.15s ease;
@@ -264,20 +325,59 @@
                 background: var(--aus-hover);
             }
 
+            .wme-aus-country-info {
+                flex: 1;
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
             .wme-aus-country-id {
                 color: var(--aus-muted);
             }
 
-            .wme-aus-badge-imperial {
-                font-size: 11px;
-                color: #e06c75;
-                font-weight: 600;
+            .wme-aus-row-controls {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                flex-shrink: 0;
             }
 
-            .wme-aus-badge-metric {
+            .wme-aus-unit-select {
+                padding: 2px 4px;
+                background: var(--aus-bg);
+                color: var(--aus-text);
+                border: 1px solid var(--aus-border);
+                border-radius: var(--aus-radius);
                 font-size: 11px;
-                color: #4caf50;
                 font-weight: 600;
+                cursor: pointer;
+            }
+
+            .wme-aus-unit-select.is-imperial {
+                color: #e06c75;
+            }
+
+            .wme-aus-unit-select.is-metric {
+                color: #4caf50;
+            }
+
+            .wme-aus-remove-btn {
+                padding: 1px 6px;
+                background: transparent;
+                color: var(--aus-muted);
+                border: 1px solid transparent;
+                border-radius: var(--aus-radius);
+                cursor: pointer;
+                font-size: 12px;
+                line-height: 1.4;
+            }
+
+            .wme-aus-remove-btn:hover {
+                color: #e06c75;
+                border-color: var(--aus-border);
+                background: var(--aus-bg);
             }
 
             #wme-aus-reset-btn {
@@ -323,7 +423,8 @@
         if (!force && countryId === lastCountryId) return;
         lastCountryId = countryId;
 
-        const shouldBeImperial = imperialCountryIds.has(countryId);
+        const unitMode = getUnitForCountry(countryId);
+        const shouldBeImperial = unitMode === 'imperial';
         const prefs = sdk.Settings.getUserSettings();
         const isCurrentlyImperial = Boolean(prefs && prefs.isImperial);
 
@@ -356,14 +457,14 @@
     // --- UI & Sidebar Registration (SDK) ---
 
     function buildUIElement(displayName) {
-        const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-5';
+        const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-6';
 
         const container = document.createElement('div');
         container.id = 'wme-aus-container';
         container.innerHTML = `
             <h4>${displayName}</h4>
             <p class="wme-aus-desc">
-                Checked countries will automatically use <b>Imperial</b> units. All other countries will use <b>Metric</b>.
+                Configure <b>Imperial</b> or <b>Metric</b> units per country. Unlisted countries default to <b>Metric</b>.
             </p>
 
             <div id="wme-aus-status">
@@ -372,11 +473,15 @@
 
             <div class="wme-aus-input-row">
                 <input type="number" id="wme-aus-add-id" placeholder="Country ID (e.g. 124)" />
-                <button id="wme-aus-add-btn" type="button">Add ID</button>
+                <select id="wme-aus-add-unit" title="Unit system for this country">
+                    <option value="imperial">Imperial</option>
+                    <option value="metric">Metric</option>
+                </select>
+                <button id="wme-aus-add-btn" type="button">Add</button>
             </div>
 
             <div class="wme-aus-section-title">
-                Imperial Countries & Loaded Map Areas
+                Configured & Loaded Map Countries
             </div>
             <div id="wme-aus-country-list"></div>
 
@@ -390,21 +495,30 @@
 
         const addBtn = container.querySelector('#wme-aus-add-btn');
         const addInput = container.querySelector('#wme-aus-add-id');
+        const addUnitSelect = container.querySelector('#wme-aus-add-unit');
         const resetBtn = container.querySelector('#wme-aus-reset-btn');
 
-        addBtn.addEventListener('click', () => {
+        const handleAddCountry = () => {
             const val = parseInt(addInput.value.trim(), 10);
+            const selectedUnit = addUnitSelect.value === 'imperial' ? 'imperial' : 'metric';
             if (!isNaN(val) && val > 0) {
-                imperialCountryIds.add(val);
+                countryUnitRules.set(val, selectedUnit);
                 saveSettings();
                 addInput.value = '';
                 refreshCountryListUI(container);
                 checkAndSetUnits(true);
             }
+        };
+
+        addBtn.addEventListener('click', handleAddCountry);
+        addInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') handleAddCountry();
         });
 
         resetBtn.addEventListener('click', () => {
-            imperialCountryIds = new Set(DEFAULT_IMPERIAL_IDS);
+            countryUnitRules = new Map(
+                Object.entries(DEFAULT_COUNTRY_RULES).map(([id, unit]) => [parseInt(id, 10), unit])
+            );
             saveSettings();
             refreshCountryListUI(container);
             checkAndSetUnits(true);
@@ -413,7 +527,8 @@
         refreshCountryListUI(container);
         const topCountry = sdk.DataModel.Countries.getTopCountry();
         if (topCountry) {
-            updateStatusBanner(topCountry.name, imperialCountryIds.has(topCountry.id), container);
+            const isImp = getUnitForCountry(topCountry.id) === 'imperial';
+            updateStatusBanner(topCountry.name, isImp, container);
         }
 
         return container;
@@ -440,7 +555,6 @@
 
             mount();
 
-            // Re-mount automatically if WME or WME Studio re-renders/clears the tab pane
             const observer = new MutationObserver(mount);
             observer.observe(document.body, { childList: true, subtree: true });
 
@@ -449,7 +563,7 @@
                 refreshCountryListUI(tabPane);
             });
         } catch (err) {
-            console.error(`${displayName}: Error registering SDK sidebar tab.`, err);
+            console.error(`${displayName}: Error registering SDK sidebar tab:`, err);
         }
     }
 
@@ -465,25 +579,19 @@
         if (!listContainer || !sdk) return;
 
         const knownCountries = new Map();
+        const loadedIds = new Set();
 
         const loadedCountries = sdk.DataModel.Countries.getAll() || [];
         loadedCountries.forEach(c => {
             if (c && typeof c.id === 'number') {
                 knownCountries.set(c.id, c.name);
+                loadedIds.add(c.id);
             }
         });
 
-        const fallbackNames = {
-            235: 'United States',
-            234: 'United Kingdom',
-            182: 'Puerto Rico',
-            88: 'Guam',
-            236: 'U.S. Virgin Islands'
-        };
-
-        imperialCountryIds.forEach(id => {
+        countryUnitRules.forEach((unit, id) => {
             if (!knownCountries.has(id)) {
-                knownCountries.set(id, fallbackNames[id] || `Country ID: ${id}`);
+                knownCountries.set(id, FALLBACK_NAMES[id] || `Country ID: ${id}`);
             }
         });
 
@@ -491,31 +599,43 @@
 
         listContainer.innerHTML = '';
         sortedEntries.forEach(([id, name]) => {
-            const isChecked = imperialCountryIds.has(id);
-            const row = document.createElement('label');
+            const currentUnit = getUnitForCountry(id);
+            const hasExplicitRule = countryUnitRules.has(id);
+
+            const row = document.createElement('div');
             row.className = 'wme-aus-country-row';
 
             row.innerHTML = `
-                <span style="display: flex; align-items: center; gap: 6px;">
-                    <input type="checkbox" data-country-id="${id}" ${isChecked ? 'checked' : ''} style="margin: 0; cursor: pointer;" />
-                    <span>${name} <small class="wme-aus-country-id">(${id})</small></span>
+                <span class="wme-aus-country-info" title="${name} (${id})">
+                    ${name} <small class="wme-aus-country-id">(${id})</small>
                 </span>
-                <span class="${isChecked ? 'wme-aus-badge-imperial' : 'wme-aus-badge-metric'}">
-                    ${isChecked ? 'Imperial' : 'Metric'}
+                <span class="wme-aus-row-controls">
+                    <select class="wme-aus-unit-select ${currentUnit === 'imperial' ? 'is-imperial' : 'is-metric'}" data-country-id="${id}">
+                        <option value="imperial" ${currentUnit === 'imperial' ? 'selected' : ''}>Imperial</option>
+                        <option value="metric" ${currentUnit === 'metric' ? 'selected' : ''}>Metric</option>
+                    </select>
+                    ${hasExplicitRule ? `<button type="button" class="wme-aus-remove-btn" title="Remove custom rule">✕</button>` : ''}
                 </span>
             `;
 
-            const checkbox = row.querySelector('input');
-            checkbox.addEventListener('change', (e) => {
-                if (e.target.checked) {
-                    imperialCountryIds.add(id);
-                } else {
-                    imperialCountryIds.delete(id);
-                }
+            const select = row.querySelector('.wme-aus-unit-select');
+            select.addEventListener('change', (e) => {
+                const newUnit = e.target.value === 'imperial' ? 'imperial' : 'metric';
+                countryUnitRules.set(id, newUnit);
                 saveSettings();
                 refreshCountryListUI(root);
                 checkAndSetUnits(true);
             });
+
+            const removeBtn = row.querySelector('.wme-aus-remove-btn');
+            if (removeBtn) {
+                removeBtn.addEventListener('click', () => {
+                    countryUnitRules.delete(id);
+                    saveSettings();
+                    refreshCountryListUI(root);
+                    checkAndSetUnits(true);
+                });
+            }
 
             listContainer.appendChild(row);
         });
