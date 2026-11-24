@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.0.beta-5
+// @version      1.0.0.beta-6
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -13,12 +13,15 @@
 // @updateURL    https://github.com/Thynamelessone/WME-AutoUnitSwitcher/raw/refs/heads/beta/WME%20Auto%20Unit%20Switcher.user.js
 // ==/UserScript==
 
+/* global getWmeSdk, WazeWrap, GM_info */
+
 (function () {
     'use strict';
 
     const SCRIPT_ID = "WME AUS";
     const SCRIPT_NAME = "WME Auto Unit Switcher";
     const updateMessage = "";
+    const USERSCRIPT_URL = "";
 
     const STORAGE_KEY = 'wme_auto_unit_switcher_imperial_ids';
 
@@ -43,7 +46,7 @@
     }
 
     function getScriptId() {
-        const clean = (SCRIPT_ID || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+        const clean = (SCRIPT_ID || '').trim().replace(/[^a-zA-Z0-9_-]/g, '-');
         return clean.length >= 3 ? clean : 'wme-auto-unit-switcher';
     }
 
@@ -75,7 +78,6 @@
 
     async function bootstrap() {
         try {
-            // Wait for WME's official SDK_INITIALIZED promise if available
             if (window.SDK_INITIALIZED) {
                 await window.SDK_INITIALIZED;
             } else {
@@ -90,7 +92,6 @@
                 scriptName: getDisplayName()
             });
 
-            // Only wait for 'wme-ready' if the SDK is not already in the ready state
             if (!sdk.State || !sdk.State.isReady()) {
                 await sdk.Events.once({ eventName: 'wme-ready' });
             }
@@ -119,16 +120,15 @@
         injectStudioStyles();
         await registerSidebarTab(displayName);
 
-        // Register SDK events
         sdk.Events.on({ eventName: 'wme-map-move-end', eventHandler: onMapUpdate });
         sdk.Events.on({ eventName: 'wme-map-data-loaded', eventHandler: onMapUpdate });
 
         if (hasWazeWrap && updateMessage && updateMessage.trim() !== "") {
             WazeWrap.Interface.ShowScriptUpdate(
                 displayName,
-                typeof GM_info !== 'undefined' ? GM_info.script.version : '2.0.1',
+                typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-5',
                 updateMessage,
-                USERSCRIPT_URL || "https://greasyfork.org/",
+                USERSCRIPT_URL || "https://github.com/Thynamelessone/WME-AutoUnitSwitcher",
                 ""
             );
         }
@@ -162,7 +162,11 @@
                 font-size: 13px;
                 color: var(--aus-text);
                 background: var(--aus-bg);
-                display: block;
+                display: block !important;
+                visibility: visible !important;
+                opacity: 1 !important;
+                width: 100%;
+                box-sizing: border-box;
             }
 
             html[data-wme-studio-theme="dark"] #wme-aus-container,
@@ -351,6 +355,70 @@
 
     // --- UI & Sidebar Registration (SDK) ---
 
+    function buildUIElement(displayName) {
+        const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-5';
+
+        const container = document.createElement('div');
+        container.id = 'wme-aus-container';
+        container.innerHTML = `
+            <h4>${displayName}</h4>
+            <p class="wme-aus-desc">
+                Checked countries will automatically use <b>Imperial</b> units. All other countries will use <b>Metric</b>.
+            </p>
+
+            <div id="wme-aus-status">
+                Detecting country...
+            </div>
+
+            <div class="wme-aus-input-row">
+                <input type="number" id="wme-aus-add-id" placeholder="Country ID (e.g. 124)" />
+                <button id="wme-aus-add-btn" type="button">Add ID</button>
+            </div>
+
+            <div class="wme-aus-section-title">
+                Imperial Countries & Loaded Map Areas
+            </div>
+            <div id="wme-aus-country-list"></div>
+
+            <button id="wme-aus-reset-btn" type="button">
+                Reset to Defaults
+            </button>
+            <div class="wme-aus-footer">
+                v${version}
+            </div>
+        `;
+
+        const addBtn = container.querySelector('#wme-aus-add-btn');
+        const addInput = container.querySelector('#wme-aus-add-id');
+        const resetBtn = container.querySelector('#wme-aus-reset-btn');
+
+        addBtn.addEventListener('click', () => {
+            const val = parseInt(addInput.value.trim(), 10);
+            if (!isNaN(val) && val > 0) {
+                imperialCountryIds.add(val);
+                saveSettings();
+                addInput.value = '';
+                refreshCountryListUI(container);
+                checkAndSetUnits(true);
+            }
+        });
+
+        resetBtn.addEventListener('click', () => {
+            imperialCountryIds = new Set(DEFAULT_IMPERIAL_IDS);
+            saveSettings();
+            refreshCountryListUI(container);
+            checkAndSetUnits(true);
+        });
+
+        refreshCountryListUI(container);
+        const topCountry = sdk.DataModel.Countries.getTopCountry();
+        if (topCountry) {
+            updateStatusBanner(topCountry.name, imperialCountryIds.has(topCountry.id), container);
+        }
+
+        return container;
+    }
+
     async function registerSidebarTab(displayName) {
         try {
             const { tabLabel, tabPane } = await sdk.Sidebar.registerScriptTab();
@@ -363,72 +431,23 @@
                 tabLabel.dataset.userscriptUrl = USERSCRIPT_URL;
             }
 
-            const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '2.0.1';
-
-            const container = document.createElement('div');
-            container.id = 'wme-aus-container';
-            container.innerHTML = `
-                <h4>${displayName}</h4>
-                <p class="wme-aus-desc">
-                    Checked countries will automatically use <b>Imperial</b> units. All other countries will use <b>Metric</b>.
-                </p>
-
-                <div id="wme-aus-status">
-                    Detecting country...
-                </div>
-
-                <div class="wme-aus-input-row">
-                    <input type="number" id="wme-aus-add-id" placeholder="Country ID (e.g. 124)" />
-                    <button id="wme-aus-add-btn" type="button">Add ID</button>
-                </div>
-
-                <div class="wme-aus-section-title">
-                    Imperial Countries & Loaded Map Areas
-                </div>
-                <div id="wme-aus-country-list"></div>
-
-                <button id="wme-aus-reset-btn" type="button">
-                    Reset to Defaults
-                </button>
-                <div class="wme-aus-footer">
-                    v${version}
-                </div>
-            `;
-
-            tabPane.innerHTML = '';
-            tabPane.appendChild(container);
-
-            const addBtn = container.querySelector('#wme-aus-add-btn');
-            const addInput = container.querySelector('#wme-aus-add-id');
-            const resetBtn = container.querySelector('#wme-aus-reset-btn');
-
-            addBtn.addEventListener('click', () => {
-                const val = parseInt(addInput.value.trim(), 10);
-                if (!isNaN(val) && val > 0) {
-                    imperialCountryIds.add(val);
-                    saveSettings();
-                    addInput.value = '';
-                    refreshCountryListUI(container);
-                    checkAndSetUnits(true);
+            const mount = () => {
+                if (!tabPane) return;
+                if (!tabPane.querySelector('#wme-aus-container')) {
+                    tabPane.appendChild(buildUIElement(displayName));
                 }
-            });
+            };
 
-            resetBtn.addEventListener('click', () => {
-                imperialCountryIds = new Set(DEFAULT_IMPERIAL_IDS);
-                saveSettings();
-                refreshCountryListUI(container);
-                checkAndSetUnits(true);
-            });
+            mount();
+
+            // Re-mount automatically if WME or WME Studio re-renders/clears the tab pane
+            const observer = new MutationObserver(mount);
+            observer.observe(document.body, { childList: true, subtree: true });
 
             tabLabel.addEventListener('click', () => {
-                refreshCountryListUI(container);
+                mount();
+                refreshCountryListUI(tabPane);
             });
-
-            refreshCountryListUI(container);
-            const topCountry = sdk.DataModel.Countries.getTopCountry();
-            if (topCountry) {
-                updateStatusBanner(topCountry.name, imperialCountryIds.has(topCountry.id), container);
-            }
         } catch (err) {
             console.error(`${displayName}: Error registering SDK sidebar tab.`, err);
         }
