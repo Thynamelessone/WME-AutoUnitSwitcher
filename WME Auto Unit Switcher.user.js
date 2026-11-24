@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.0.beta-4
+// @version      1.0.0.beta-5
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -73,24 +73,28 @@
 
     // --- SDK & WazeWrap Bootstrap ---
 
-    function bootstrap() {
-        if (typeof getWmeSdk === 'function') {
-            initSdk();
-        } else if (window.SDK_INITIALIZED) {
-            window.SDK_INITIALIZED.then(initSdk);
-        } else {
-            window.addEventListener('wme-initialized', initSdk, { once: true });
-        }
-    }
-
-    async function initSdk() {
+    async function bootstrap() {
         try {
+            // Wait for WME's official SDK_INITIALIZED promise if available
+            if (window.SDK_INITIALIZED) {
+                await window.SDK_INITIALIZED;
+            } else {
+                await new Promise((resolve) => {
+                    if (typeof getWmeSdk === 'function') return resolve();
+                    window.addEventListener('wme-initialized', resolve, { once: true });
+                });
+            }
+
             sdk = getWmeSdk({
                 scriptId: getScriptId(),
                 scriptName: getDisplayName()
             });
 
-            await sdk.Events.once({ eventName: 'wme-ready' });
+            // Only wait for 'wme-ready' if the SDK is not already in the ready state
+            if (!sdk.State || !sdk.State.isReady()) {
+                await sdk.Events.once({ eventName: 'wme-ready' });
+            }
+
             waitForWazeWrap();
         } catch (err) {
             console.error(`${getDisplayName()}: Failed to initialize WME SDK.`, err);
@@ -99,11 +103,10 @@
 
     function waitForWazeWrap(tries = 1) {
         if (typeof WazeWrap !== 'undefined' && WazeWrap.Ready) {
-            init();
-        } else if (tries < 100) {
+            init(true);
+        } else if (tries < 50) {
             setTimeout(() => waitForWazeWrap(++tries), 200);
         } else {
-            // Proceed even if WazeWrap fails so the script isn't blocked
             console.warn(`${getDisplayName()}: WazeWrap did not load in time, continuing with SDK only.`);
             init(false);
         }
@@ -116,14 +119,14 @@
         injectStudioStyles();
         await registerSidebarTab(displayName);
 
-        // Register SDK events for map movement and map data loading
+        // Register SDK events
         sdk.Events.on({ eventName: 'wme-map-move-end', eventHandler: onMapUpdate });
         sdk.Events.on({ eventName: 'wme-map-data-loaded', eventHandler: onMapUpdate });
 
         if (hasWazeWrap && updateMessage && updateMessage.trim() !== "") {
             WazeWrap.Interface.ShowScriptUpdate(
                 displayName,
-                typeof GM_info !== 'undefined' ? GM_info.script.version : '2.0.0',
+                typeof GM_info !== 'undefined' ? GM_info.script.version : '2.0.1',
                 updateMessage,
                 USERSCRIPT_URL || "https://greasyfork.org/",
                 ""
@@ -329,10 +332,9 @@
 
     function setWMEUnits(useImperial, countryName) {
         try {
-            // Update user preferences directly via the WME SDK
             sdk.Settings.setUserSettings({ isImperial: useImperial });
 
-            // Keep the native Settings UI radio button in sync if rendered
+            // Sync native Settings UI radio button if rendered
             const targetId = useImperial ? 'prefs-unit-imperial' : 'prefs-unit-metric';
             const radioBtn = document.getElementById(targetId);
             if (radioBtn && !radioBtn.checked) {
@@ -361,7 +363,7 @@
                 tabLabel.dataset.userscriptUrl = USERSCRIPT_URL;
             }
 
-            const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '2.0.0';
+            const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '2.0.1';
 
             const container = document.createElement('div');
             container.id = 'wme-aus-container';
@@ -445,7 +447,6 @@
 
         const knownCountries = new Map();
 
-        // Retrieve all countries currently loaded in SDK DataModel
         const loadedCountries = sdk.DataModel.Countries.getAll() || [];
         loadedCountries.forEach(c => {
             if (c && typeof c.id === 'number') {
