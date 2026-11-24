@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.3.beta-1
+// @version      1.0.3.beta-2
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -1174,22 +1174,16 @@
         const loadedCountries = sdk.DataModel.Countries.getAll() || [];
         loadedCountries.forEach(c => {
             if (c && typeof c.id === 'number') {
-                loadedIds.add(c.id);
                 setCachedCountryName(c.id, c.name);
-                knownCountries.set(c.id, getCountryName(c.id));
             }
         });
 
-        try {
-            const topCountry = sdk.DataModel.Countries.getTopCountry();
-            if (topCountry && typeof topCountry.id === 'number') {
-                loadedIds.add(topCountry.id);
-                setCachedCountryName(topCountry.id, topCountry.name);
-                knownCountries.set(topCountry.id, getCountryName(topCountry.id));
-            }
-        } catch (_) {}
+        if (typeof activeCountryId === 'number') {
+            loadedIds.add(activeCountryId);
+            knownCountries.set(activeCountryId, getCountryName(activeCountryId));
+        }
 
-        countryRules.forEach((cfg, id) => {
+        customRuleIds.forEach(id => {
             if (!knownCountries.has(id)) {
                 knownCountries.set(id, getCountryName(id));
             }
