@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.2.beta-1
+// @version      1.0.2.beta-2
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -956,7 +956,7 @@
                 <input type="checkbox" id="wme-aus-global-multi-chk" ${globalMultiUnit ? 'checked' : ''} />
                 <span>
                     <b>Show Multiple Units Globally</b><br>
-                    <small style="color: var(--aus-muted);">Show <code>(yd / m)</code> or <code>(yd / ft)</code> in all countries and hide per-country toggles.</small>
+                    <small style="color: var(--aus-muted);">Show <code>(yd / m)</code> or <code>(yd / ft)</code> in all countries.</small>
                 </span>
             </label>
 
