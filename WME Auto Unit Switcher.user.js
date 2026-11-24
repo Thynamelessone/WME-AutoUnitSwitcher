@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.0.beta-11
+// @version      1.0.0.beta-12
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -338,7 +338,7 @@
         if (hasWazeWrap && updateMessage && updateMessage.trim() !== "") {
             WazeWrap.Interface.ShowScriptUpdate(
                 displayName,
-                typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-10',
+                typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-11',
                 updateMessage,
                 USERSCRIPT_URL || "https://github.com/Thynamelessone/WME-AutoUnitSwitcher",
                 ""
@@ -820,7 +820,7 @@
     // --- UI & Sidebar Registration (SDK) ---
 
     function buildUIElement(displayName) {
-        const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-10';
+        const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-11';
 
         const container = document.createElement('div');
         container.id = 'wme-aus-container';
@@ -1014,6 +1014,7 @@
             const currentUnit = rule.unit;
             const isMulti = Boolean(rule.multiUnit);
             const hasExplicitRule = countryRules.has(id);
+            const isDefaultCountry = Object.prototype.hasOwnProperty.call(DEFAULT_COUNTRY_RULES, id);
             const multiToggleLabel = currentUnit === 'imperial' ? '+yd/m' : '+yd/ft';
             const multiToggleTitle = currentUnit === 'imperial'
                 ? 'Show Yards & Meters next to Feet'
@@ -1039,7 +1040,7 @@
                             <span>${multiToggleLabel}</span>
                         </label>
                     ` : ''}
-                    ${hasExplicitRule ? `<button type="button" class="wme-aus-remove-btn" title="Remove custom rule">✕</button>` : ''}
+                    ${hasExplicitRule && !isDefaultCountry ? `<button type="button" class="wme-aus-remove-btn" title="Remove custom rule">✕</button>` : ''}
                 </span>
             `;
 
