@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.2.beta-5
+// @version      1.0.2.beta-6
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -41,7 +41,7 @@
     // Default Country Rules: { unit: 'imperial' | 'metric', multiUnit: boolean }
     const DEFAULT_COUNTRY_RULES = {
         235: { unit: 'imperial', multiUnit: false }, // United States
-        234: { unit: 'imperial', multiUnit: true },  // United Kingdom (ft + yd/m)
+        234: { unit: 'imperial', multiUnit: false },  // United Kingdom (ft + yd/m)
         182: { unit: 'imperial', multiUnit: false }, // Puerto Rico
         88:  { unit: 'imperial', multiUnit: false }, // Guam
         236: { unit: 'imperial', multiUnit: false }  // U.S. Virgin Islands
