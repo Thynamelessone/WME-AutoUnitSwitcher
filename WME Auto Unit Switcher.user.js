@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.1.beta-2
+// @version      1.0.2.beta-1
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -106,7 +106,7 @@
     let countryRules = new Map();
     // Map<number, string>
     let cachedCountryNames = new Map();
-    let globalMultiUnit = false;
+    let globalMultiUnit = true;
     let lastCountryId = null;
     let activeCountryId = null;
     let multiUnitObserver = null;
@@ -1036,8 +1036,8 @@
             countryRules = new Map(
                 Object.entries(DEFAULT_COUNTRY_RULES).map(([id, cfg]) => [parseInt(id, 10), { ...cfg }])
             );
-            globalMultiUnit = false;
-            globalMultiChk.checked = false;
+            globalMultiUnit = true;
+            globalMultiChk.checked = true;
             saveSettings();
             refreshCountryListUI(container);
             checkAndSetUnits(true);
