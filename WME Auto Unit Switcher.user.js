@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.2.beta-4
+// @version      1.0.2.beta-5
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -26,6 +26,7 @@
     const STORAGE_KEY = 'wme_auto_unit_switcher_country_rules_v2';
     const COUNTRY_NAMES_STORAGE_KEY = 'wme_auto_unit_switcher_country_names';
     const GLOBAL_MULTI_UNIT_KEY = 'wme_auto_unit_switcher_global_multi_unit';
+    const RESET_1_0_2_KEY = 'wme_auto_unit_switcher_reset_1_0_2';
     const LEGACY_V1_STORAGE_KEY = 'wme_auto_unit_switcher_country_rules';
     const LEGACY_UK_HYBRID_KEY = 'wme_auto_unit_switcher_uk_hybrid';
 
@@ -116,6 +117,10 @@
         return (SCRIPT_NAME && SCRIPT_NAME.trim()) || (typeof GM_info !== 'undefined' && GM_info.script.name) || 'WME Auto Unit Switcher';
     }
 
+    function getScriptVersion() {
+        return (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.0.2';
+    }
+
     function getScriptId() {
         const clean = (SCRIPT_ID || '').trim().replace(/[^a-zA-Z0-9_-]/g, '-');
         return clean.length >= 3 ? clean : 'wme-auto-unit-switcher';
@@ -137,9 +142,29 @@
     }
 
     function loadSettings() {
+        let shouldResetDefaults = false;
+
+        try {
+            if (localStorage.getItem(RESET_1_0_2_KEY) !== 'true') {
+                shouldResetDefaults = true;
+                localStorage.setItem(RESET_1_0_2_KEY, 'true');
+            }
+        } catch (e) {
+            console.error(`${getDisplayName()}: Error checking reset flag.`, e);
+        }
+
         cachedCountryNames = new Map(
             Object.entries(WAZE_COUNTRY_NAMES).map(([id, name]) => [parseInt(id, 10), name])
         );
+
+        if (shouldResetDefaults) {
+            countryRules = new Map(
+                Object.entries(DEFAULT_COUNTRY_RULES).map(([id, cfg]) => [parseInt(id, 10), { ...cfg }])
+            );
+            globalMultiUnit = true;
+            saveSettings();
+            return;
+        }
 
         try {
             const savedNames = localStorage.getItem(COUNTRY_NAMES_STORAGE_KEY);
@@ -457,7 +482,7 @@
         if (hasWazeWrap && updateMessage && updateMessage.trim() !== "") {
             WazeWrap.Interface.ShowScriptUpdate(
                 displayName,
-                typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-13',
+                getScriptVersion(),
                 updateMessage,
                 USERSCRIPT_URL || "https://github.com/Thynamelessone/WME-AutoUnitSwitcher",
                 ""
@@ -938,7 +963,7 @@
     // --- UI & Sidebar Registration (SDK) ---
 
     function buildUIElement(displayName) {
-        const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-13';
+        const version = getScriptVersion();
 
         const container = document.createElement('div');
         container.id = 'wme-aus-container';
