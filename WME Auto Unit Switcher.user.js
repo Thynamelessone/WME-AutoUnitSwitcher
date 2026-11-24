@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.0.beta-7
+// @version      1.0.0.beta-8
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -24,7 +24,10 @@
     const USERSCRIPT_URL = "";
 
     const STORAGE_KEY = 'wme_auto_unit_switcher_country_rules';
+    const UK_HYBRID_STORAGE_KEY = 'wme_auto_unit_switcher_uk_hybrid';
     const LEGACY_STORAGE_KEY = 'wme_auto_unit_switcher_imperial_ids';
+
+    const UK_COUNTRY_ID = 234;
 
     // 64x64 inline SVG ruler icon for WME Studio's script bar
     const SCRIPT_ICON_DATA_URL = 'data:image/svg+xml;utf8,' + encodeURIComponent(
@@ -55,7 +58,11 @@
     let sdk = null;
     // Map<number, 'imperial' | 'metric'>
     let countryUnitRules = new Map();
+    let enableUkHybridReadout = true;
     let lastCountryId = null;
+    let isCurrentlyInUK = false;
+    let ukObserver = null;
+    let ukScanScheduled = false;
 
     function getDisplayName() {
         return (SCRIPT_NAME && SCRIPT_NAME.trim()) || (typeof GM_info !== 'undefined' && GM_info.script.name) || 'WME Auto Unit Switcher';
@@ -67,6 +74,15 @@
     }
 
     function loadSettings() {
+        try {
+            const ukSaved = localStorage.getItem(UK_HYBRID_STORAGE_KEY);
+            if (ukSaved !== null) {
+                enableUkHybridReadout = ukSaved === 'true';
+            }
+        } catch (e) {
+            console.error(`${getDisplayName()}: Error loading UK hybrid setting.`, e);
+        }
+
         try {
             const saved = localStorage.getItem(STORAGE_KEY);
             if (saved) {
@@ -114,6 +130,7 @@
                 obj[id] = unit;
             });
             localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+            localStorage.setItem(UK_HYBRID_STORAGE_KEY, String(enableUkHybridReadout));
         } catch (e) {
             console.error(`${getDisplayName()}: Error saving settings.`, e);
         }
@@ -168,6 +185,7 @@
         loadSettings();
         injectStudioStyles();
         await registerSidebarTab(displayName);
+        setupUkHybridObserver();
 
         sdk.Events.on({ eventName: 'wme-map-move-end', eventHandler: onMapUpdate });
         sdk.Events.on({ eventName: 'wme-map-data-loaded', eventHandler: onMapUpdate });
@@ -175,7 +193,7 @@
         if (hasWazeWrap && updateMessage && updateMessage.trim() !== "") {
             WazeWrap.Interface.ShowScriptUpdate(
                 displayName,
-                typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-6',
+                typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-7',
                 updateMessage,
                 USERSCRIPT_URL || "https://github.com/Thynamelessone/WME-AutoUnitSwitcher",
                 ""
@@ -186,6 +204,130 @@
         console.log(`${displayName}: Initialized with WME SDK.`);
     }
 
+    // --- UK Yards & Meters DOM Helper ---
+
+    function formatUkConversion(feetValue) {
+        const yards = feetValue / 3;
+        const meters = feetValue * 0.3048;
+
+        const ydStr = yards >= 100 ? Math.round(yards).toLocaleString() : yards.toFixed(1).replace(/\.0$/, '');
+        const mStr = meters >= 100 ? Math.round(meters).toLocaleString() : meters.toFixed(1).replace(/\.0$/, '');
+
+        return `(${ydStr} yd / ${mStr} m)`;
+    }
+
+    function setupUkHybridObserver() {
+        if (ukObserver) return;
+
+        ukObserver = new MutationObserver(() => {
+            if (!isCurrentlyInUK || !enableUkHybridReadout) return;
+            if (ukScanScheduled) return;
+
+            ukScanScheduled = true;
+            requestAnimationFrame(() => {
+                ukScanScheduled = false;
+                updateUkHybridNodes();
+            });
+        });
+
+        ukObserver.observe(document.body, {
+            childList: true,
+            subtree: true,
+            characterData: true
+        });
+    }
+
+    function clearUkHybridNodes() {
+        document.querySelectorAll('.wme-aus-uk-extra').forEach(el => el.remove());
+        document.querySelectorAll('[data-wme-aus-ft]').forEach(el => {
+            delete el.dataset.wmeAusFt;
+        });
+    }
+
+    function updateUkHybridNodes() {
+        if (!isCurrentlyInUK || !enableUkHybridReadout) {
+            clearUkHybridNodes();
+            return;
+        }
+
+        // Target selectors for WME's map scale bar, segment length readouts, and distance labels
+        const candidateSelectors = [
+            '.ol-scale-line-inner',
+            '.wm-scale-bar',
+            '[class*="scale"] [class*="label"]',
+            '#edit-panel .length',
+            '#edit-panel [class*="length"]',
+            '#edit-panel [class*="distance"]',
+            '#segment-edit-general .length',
+            '.segment-length',
+            '.waze-control-scale-line-inner'
+        ];
+
+        const elements = new Set();
+        candidateSelectors.forEach(sel => {
+            document.querySelectorAll(sel).forEach(el => elements.add(el));
+        });
+
+        // Also scan compact leaf text elements inside the edit sidebar and map scale controls
+        const containers = [
+            document.getElementById('edit-panel'),
+            document.querySelector('.ol-overlaycontainer-stopevent')
+        ].filter(Boolean);
+
+        containers.forEach(container => {
+            const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+            let node;
+            while ((node = walker.nextNode())) {
+                const parent = node.parentElement;
+                if (!parent || parent.closest('#wme-aus-container') || parent.classList.contains('wme-aus-uk-extra')) continue;
+                if (parent.tagName === 'INPUT' || parent.tagName === 'TEXTAREA' || parent.tagName === 'SELECT') continue;
+
+                const txt = node.nodeValue ? node.nodeValue.trim() : '';
+                if (/^\d[\d,.]*\s*(ft|feet)\b/i.test(txt)) {
+                    elements.add(parent);
+                }
+            }
+        });
+
+        elements.forEach(el => {
+            if (el.closest('#wme-aus-container')) return;
+
+            // Read text excluding our own injected badge
+            let rawText = '';
+            el.childNodes.forEach(child => {
+                if (child.nodeType === Node.TEXT_NODE) {
+                    rawText += child.nodeValue;
+                } else if (child.nodeType === Node.ELEMENT_NODE && !child.classList.contains('wme-aus-uk-extra')) {
+                    rawText += child.textContent;
+                }
+            });
+
+            const match = rawText.trim().match(/^(\d[\d,]*\.?\d*)\s*(ft|feet)\b/i);
+            if (!match) {
+                const existing = el.querySelector('.wme-aus-uk-extra');
+                if (existing) existing.remove();
+                delete el.dataset.wmeAusFt;
+                return;
+            }
+
+            const feet = parseFloat(match[1].replace(/,/g, ''));
+            if (isNaN(feet) || feet <= 0) return;
+
+            const key = String(feet);
+            let badge = el.querySelector('.wme-aus-uk-extra');
+
+            if (el.dataset.wmeAusFt === key && badge) return;
+            el.dataset.wmeAusFt = key;
+
+            if (!badge) {
+                badge = document.createElement('span');
+                badge.className = 'wme-aus-uk-extra';
+                el.appendChild(badge);
+            }
+            badge.textContent = ` ${formatUkConversion(feet)}`;
+        });
+    }
+
     // --- WME Studio Theme-Aware CSS (with full fallbacks) ---
 
     function injectStudioStyles() {
@@ -194,6 +336,13 @@
         const style = document.createElement('style');
         style.id = 'wme-aus-styles';
         style.textContent = `
+            .wme-aus-uk-extra {
+                font-size: 0.9em;
+                opacity: 0.85;
+                font-weight: 500;
+                white-space: nowrap;
+            }
+
             #wme-aus-container {
                 --aus-bg: var(--wme-studio-surface, var(--background_default, #ffffff));
                 --aus-text: var(--wme-studio-text, var(--content_default, #202124));
@@ -243,6 +392,24 @@
                 margin-bottom: 12px;
                 font-size: 12px;
                 color: var(--aus-text);
+            }
+
+            .wme-aus-option-box {
+                display: flex;
+                align-items: flex-start;
+                gap: 8px;
+                padding: 6px 8px;
+                margin-bottom: 12px;
+                background: var(--aus-input);
+                border: 1px solid var(--aus-border);
+                border-radius: var(--aus-radius);
+                font-size: 12px;
+                cursor: pointer;
+            }
+
+            .wme-aus-option-box input {
+                margin-top: 2px;
+                cursor: pointer;
             }
 
             .wme-aus-input-row {
@@ -410,6 +577,7 @@
     function onMapUpdate() {
         checkAndSetUnits();
         refreshCountryListUI();
+        updateUkHybridNodes();
     }
 
     function checkAndSetUnits(force = false) {
@@ -419,6 +587,11 @@
         if (!topCountry) return;
 
         const countryId = topCountry.id;
+        isCurrentlyInUK = countryId === UK_COUNTRY_ID;
+
+        if (!isCurrentlyInUK) {
+            clearUkHybridNodes();
+        }
 
         if (!force && countryId === lastCountryId) return;
         lastCountryId = countryId;
@@ -457,7 +630,7 @@
     // --- UI & Sidebar Registration (SDK) ---
 
     function buildUIElement(displayName) {
-        const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-6';
+        const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-7';
 
         const container = document.createElement('div');
         container.id = 'wme-aus-container';
@@ -470,6 +643,14 @@
             <div id="wme-aus-status">
                 Detecting country...
             </div>
+
+            <label class="wme-aus-option-box">
+                <input type="checkbox" id="wme-aus-uk-hybrid-chk" ${enableUkHybridReadout ? 'checked' : ''} />
+                <span>
+                    <b>UK Yards & Meters Helper</b><br>
+                    <small style="color: var(--aus-muted);">Show <code>(yd / m)</code> next to feet in the UK (ID 234).</small>
+                </span>
+            </label>
 
             <div class="wme-aus-input-row">
                 <input type="number" id="wme-aus-add-id" placeholder="Country ID (e.g. 124)" />
@@ -493,10 +674,21 @@
             </div>
         `;
 
+        const ukHybridChk = container.querySelector('#wme-aus-uk-hybrid-chk');
         const addBtn = container.querySelector('#wme-aus-add-btn');
         const addInput = container.querySelector('#wme-aus-add-id');
         const addUnitSelect = container.querySelector('#wme-aus-add-unit');
         const resetBtn = container.querySelector('#wme-aus-reset-btn');
+
+        ukHybridChk.addEventListener('change', (e) => {
+            enableUkHybridReadout = e.target.checked;
+            saveSettings();
+            if (enableUkHybridReadout) {
+                updateUkHybridNodes();
+            } else {
+                clearUkHybridNodes();
+            }
+        });
 
         const handleAddCountry = () => {
             const val = parseInt(addInput.value.trim(), 10);
@@ -519,9 +711,12 @@
             countryUnitRules = new Map(
                 Object.entries(DEFAULT_COUNTRY_RULES).map(([id, unit]) => [parseInt(id, 10), unit])
             );
+            enableUkHybridReadout = true;
+            ukHybridChk.checked = true;
             saveSettings();
             refreshCountryListUI(container);
             checkAndSetUnits(true);
+            updateUkHybridNodes();
         });
 
         refreshCountryListUI(container);
@@ -579,13 +774,11 @@
         if (!listContainer || !sdk) return;
 
         const knownCountries = new Map();
-        const loadedIds = new Set();
 
         const loadedCountries = sdk.DataModel.Countries.getAll() || [];
         loadedCountries.forEach(c => {
             if (c && typeof c.id === 'number') {
                 knownCountries.set(c.id, c.name);
-                loadedIds.add(c.id);
             }
         });
 
