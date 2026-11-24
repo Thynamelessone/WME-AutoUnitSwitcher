@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.0.beta-9
+// @version      1.0.0.beta-10
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -24,6 +24,7 @@
     const USERSCRIPT_URL = "";
 
     const STORAGE_KEY = 'wme_auto_unit_switcher_country_rules_v2';
+    const COUNTRY_NAMES_STORAGE_KEY = 'wme_auto_unit_switcher_country_names';
     const GLOBAL_MULTI_UNIT_KEY = 'wme_auto_unit_switcher_global_multi_unit';
     const LEGACY_V1_STORAGE_KEY = 'wme_auto_unit_switcher_country_rules';
     const LEGACY_UK_HYBRID_KEY = 'wme_auto_unit_switcher_uk_hybrid';
@@ -56,6 +57,8 @@
     let sdk = null;
     // Map<number, { unit: 'imperial' | 'metric', multiUnit: boolean }>
     let countryRules = new Map();
+    // Map<number, string>
+    let cachedCountryNames = new Map();
     let globalMultiUnit = false;
     let lastCountryId = null;
     let activeCountryId = null;
@@ -72,6 +75,27 @@
     }
 
     function loadSettings() {
+        // Load cached country names first
+        cachedCountryNames = new Map(
+            Object.entries(FALLBACK_NAMES).map(([id, name]) => [parseInt(id, 10), name])
+        );
+        try {
+            const savedNames = localStorage.getItem(COUNTRY_NAMES_STORAGE_KEY);
+            if (savedNames) {
+                const parsedNames = JSON.parse(savedNames);
+                if (parsedNames && typeof parsedNames === 'object') {
+                    Object.entries(parsedNames).forEach(([idStr, name]) => {
+                        const id = parseInt(idStr, 10);
+                        if (!isNaN(id) && typeof name === 'string' && name.trim()) {
+                            cachedCountryNames.set(id, name.trim());
+                        }
+                    });
+                }
+            }
+        } catch (e) {
+            console.error(`${getDisplayName()}: Error loading cached country names.`, e);
+        }
+
         try {
             const globalSaved = localStorage.getItem(GLOBAL_MULTI_UNIT_KEY);
             if (globalSaved !== null) {
@@ -94,6 +118,9 @@
                                 unit: cfg.unit,
                                 multiUnit: Boolean(cfg.multiUnit)
                             });
+                            if (typeof cfg.name === 'string' && cfg.name.trim()) {
+                                cachedCountryNames.set(id, cfg.name.trim());
+                            }
                         }
                     });
                     countryRules = map;
@@ -137,13 +164,63 @@
         try {
             const obj = {};
             countryRules.forEach((cfg, id) => {
-                obj[id] = { unit: cfg.unit, multiUnit: Boolean(cfg.multiUnit) };
+                const knownName = cachedCountryNames.get(id);
+                obj[id] = {
+                    unit: cfg.unit,
+                    multiUnit: Boolean(cfg.multiUnit),
+                    ...(knownName ? { name: knownName } : {})
+                };
             });
             localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
             localStorage.setItem(GLOBAL_MULTI_UNIT_KEY, String(globalMultiUnit));
+            saveCountryNamesCache();
         } catch (e) {
             console.error(`${getDisplayName()}: Error saving settings.`, e);
         }
+    }
+
+    function saveCountryNamesCache() {
+        try {
+            const namesObj = {};
+            cachedCountryNames.forEach((name, id) => {
+                namesObj[id] = name;
+            });
+            localStorage.setItem(COUNTRY_NAMES_STORAGE_KEY, JSON.stringify(namesObj));
+        } catch (e) {
+            console.error(`${getDisplayName()}: Error saving country names cache.`, e);
+        }
+    }
+
+    function cacheLoadedCountryNames() {
+        if (!sdk) return false;
+        let updated = false;
+
+        const topCountry = sdk.DataModel.Countries.getTopCountry();
+        if (topCountry && typeof topCountry.id === 'number' && topCountry.name) {
+            if (cachedCountryNames.get(topCountry.id) !== topCountry.name) {
+                cachedCountryNames.set(topCountry.id, topCountry.name);
+                updated = true;
+            }
+        }
+
+        const loadedCountries = sdk.DataModel.Countries.getAll() || [];
+        loadedCountries.forEach(c => {
+            if (c && typeof c.id === 'number' && c.name) {
+                if (cachedCountryNames.get(c.id) !== c.name) {
+                    cachedCountryNames.set(c.id, c.name);
+                    updated = true;
+                }
+            }
+        });
+
+        if (updated) {
+            saveCountryNamesCache();
+        }
+        return updated;
+    }
+
+    function getCountryName(countryId) {
+        return cachedCountryNames.get(countryId) || FALLBACK_NAMES[countryId] || `Country ID: ${countryId}`;
     }
 
     function getRuleForCountry(countryId) {
@@ -209,7 +286,7 @@
         if (hasWazeWrap && updateMessage && updateMessage.trim() !== "") {
             WazeWrap.Interface.ShowScriptUpdate(
                 displayName,
-                typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-8',
+                typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-9',
                 updateMessage,
                 USERSCRIPT_URL || "https://github.com/Thynamelessone/WME-AutoUnitSwitcher",
                 ""
@@ -276,7 +353,6 @@
 
         const elements = new Set();
 
-        // Explicit selectors for scale bar, segment length, and measure tool overlays
         const candidateSelectors = [
             '.ol-scale-line-inner',
             '.wm-scale-bar',
@@ -301,7 +377,6 @@
             document.querySelectorAll(sel).forEach(el => elements.add(el));
         });
 
-        // Walk text nodes inside the edit panel and the entire map container (covers measure tool, drawing tooltips, scale bar)
         const scanRoots = [
             document.getElementById('edit-panel'),
             document.getElementById('map')
@@ -326,12 +401,10 @@
             if (el.closest('#wme-aus-container')) return;
             if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return;
 
-            // Avoid attaching to large wrapper divs that contain child block elements
             if (el.children.length > 1 || (el.children.length === 1 && !el.children[0].classList.contains('wme-aus-extra-unit'))) {
                 return;
             }
 
-            // Read raw text excluding our own injected badge
             let rawText = '';
             el.childNodes.forEach(child => {
                 if (child.nodeType === Node.TEXT_NODE) {
@@ -644,6 +717,7 @@
     // --- Core Unit Switching Logic (SDK) ---
 
     function onMapUpdate() {
+        cacheLoadedCountryNames();
         checkAndSetUnits();
         refreshCountryListUI();
         updateMultiUnitNodes();
@@ -681,7 +755,6 @@
         try {
             sdk.Settings.setUserSettings({ isImperial: useImperial });
 
-            // Sync native Settings UI radio button if rendered
             const targetId = useImperial ? 'prefs-unit-imperial' : 'prefs-unit-metric';
             const radioBtn = document.getElementById(targetId);
             if (radioBtn && !radioBtn.checked) {
@@ -699,7 +772,7 @@
     // --- UI & Sidebar Registration (SDK) ---
 
     function buildUIElement(displayName) {
-        const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-8';
+        const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-9';
 
         const container = document.createElement('div');
         container.id = 'wme-aus-container';
@@ -764,6 +837,7 @@
             const val = parseInt(addInput.value.trim(), 10);
             const selectedUnit = addUnitSelect.value === 'imperial' ? 'imperial' : 'metric';
             if (!isNaN(val) && val > 0) {
+                cacheLoadedCountryNames();
                 const existing = countryRules.get(val);
                 countryRules.set(val, {
                     unit: selectedUnit,
@@ -833,6 +907,7 @@
 
             tabLabel.addEventListener('click', () => {
                 mount();
+                cacheLoadedCountryNames();
                 refreshCountryListUI(tabPane);
             });
         } catch (err) {
@@ -854,18 +929,22 @@
         const listContainer = root.querySelector('#wme-aus-country-list');
         if (!listContainer || !sdk) return;
 
+        cacheLoadedCountryNames();
+
         const knownCountries = new Map();
 
+        // Include all countries currently loaded in WME
         const loadedCountries = sdk.DataModel.Countries.getAll() || [];
         loadedCountries.forEach(c => {
             if (c && typeof c.id === 'number') {
-                knownCountries.set(c.id, c.name);
+                knownCountries.set(c.id, getCountryName(c.id));
             }
         });
 
+        // Include all configured countries with their persisted names
         countryRules.forEach((cfg, id) => {
             if (!knownCountries.has(id)) {
-                knownCountries.set(id, FALLBACK_NAMES[id] || `Country ID: ${id}`);
+                knownCountries.set(id, getCountryName(id));
             }
         });
 
