@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.2.beta-6
+// @version      1.0.3.beta-1
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -24,6 +24,7 @@
     const USERSCRIPT_URL = "";
 
     const STORAGE_KEY = 'wme_auto_unit_switcher_country_rules_v2';
+    const CUSTOM_RULE_IDS_KEY = 'wme_auto_unit_switcher_custom_rule_ids';
     const COUNTRY_NAMES_STORAGE_KEY = 'wme_auto_unit_switcher_country_names';
     const GLOBAL_MULTI_UNIT_KEY = 'wme_auto_unit_switcher_global_multi_unit';
     const RESET_1_0_2_KEY = 'wme_auto_unit_switcher_reset_1_0_2';
@@ -41,7 +42,7 @@
     // Default Country Rules: { unit: 'imperial' | 'metric', multiUnit: boolean }
     const DEFAULT_COUNTRY_RULES = {
         235: { unit: 'imperial', multiUnit: false }, // United States
-        234: { unit: 'imperial', multiUnit: false },  // United Kingdom (ft + yd/m)
+        234: { unit: 'imperial', multiUnit: false }, // United Kingdom
         182: { unit: 'imperial', multiUnit: false }, // Puerto Rico
         88:  { unit: 'imperial', multiUnit: false }, // Guam
         236: { unit: 'imperial', multiUnit: false }  // U.S. Virgin Islands
@@ -105,6 +106,8 @@
     let sdk = null;
     // Map<number, { unit: 'imperial' | 'metric', multiUnit: boolean }>
     let countryRules = new Map();
+    // Set<number> of country IDs explicitly added or modified by the user
+    let customRuleIds = new Set();
     // Map<number, string>
     let cachedCountryNames = new Map();
     let globalMultiUnit = true;
@@ -118,7 +121,7 @@
     }
 
     function getScriptVersion() {
-        return (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.0.2';
+        return (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.0.3.beta-1';
     }
 
     function getScriptId() {
@@ -161,6 +164,7 @@
             countryRules = new Map(
                 Object.entries(DEFAULT_COUNTRY_RULES).map(([id, cfg]) => [parseInt(id, 10), { ...cfg }])
             );
+            customRuleIds = new Set();
             globalMultiUnit = true;
             saveSettings();
             return;
@@ -187,6 +191,18 @@
             }
         } catch (e) {
             console.error(`${getDisplayName()}: Error loading global multi-unit setting.`, e);
+        }
+
+        try {
+            const savedCustomIds = localStorage.getItem(CUSTOM_RULE_IDS_KEY);
+            if (savedCustomIds) {
+                const parsedIds = JSON.parse(savedCustomIds);
+                if (Array.isArray(parsedIds)) {
+                    customRuleIds = new Set(parsedIds.map(id => parseInt(id, 10)).filter(id => !isNaN(id)));
+                }
+            }
+        } catch (e) {
+            console.error(`${getDisplayName()}: Error loading custom rule IDs.`, e);
         }
 
         try {
@@ -226,6 +242,9 @@
                                 unit,
                                 multiUnit: id === 234 ? ukEnabled : false
                             });
+                            if (!Object.prototype.hasOwnProperty.call(DEFAULT_COUNTRY_RULES, id)) {
+                                customRuleIds.add(id);
+                            }
                         }
                     });
                     countryRules = map;
@@ -255,6 +274,7 @@
             });
             localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
             localStorage.setItem(GLOBAL_MULTI_UNIT_KEY, String(globalMultiUnit));
+            localStorage.setItem(CUSTOM_RULE_IDS_KEY, JSON.stringify(Array.from(customRuleIds)));
             saveCountryNamesCache();
         } catch (e) {
             console.error(`${getDisplayName()}: Error saving settings.`, e);
@@ -1041,6 +1061,7 @@
                     unit: selectedUnit,
                     multiUnit: existing ? existing.multiUnit : false
                 });
+                customRuleIds.add(resolved.id);
                 saveSettings();
                 addInput.value = '';
                 countryDatalist.innerHTML = '';
@@ -1061,6 +1082,7 @@
             countryRules = new Map(
                 Object.entries(DEFAULT_COUNTRY_RULES).map(([id, cfg]) => [parseInt(id, 10), { ...cfg }])
             );
+            customRuleIds = new Set();
             globalMultiUnit = true;
             globalMultiChk.checked = true;
             saveSettings();
@@ -1147,14 +1169,25 @@
         }
 
         const knownCountries = new Map();
+        const loadedIds = new Set();
 
         const loadedCountries = sdk.DataModel.Countries.getAll() || [];
         loadedCountries.forEach(c => {
             if (c && typeof c.id === 'number') {
+                loadedIds.add(c.id);
                 setCachedCountryName(c.id, c.name);
                 knownCountries.set(c.id, getCountryName(c.id));
             }
         });
+
+        try {
+            const topCountry = sdk.DataModel.Countries.getTopCountry();
+            if (topCountry && typeof topCountry.id === 'number') {
+                loadedIds.add(topCountry.id);
+                setCachedCountryName(topCountry.id, topCountry.name);
+                knownCountries.set(topCountry.id, getCountryName(topCountry.id));
+            }
+        } catch (_) {}
 
         countryRules.forEach((cfg, id) => {
             if (!knownCountries.has(id)) {
@@ -1162,7 +1195,9 @@
             }
         });
 
-        const sortedEntries = Array.from(knownCountries.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+        const sortedEntries = Array.from(knownCountries.entries())
+            .filter(([id]) => loadedIds.has(id) || customRuleIds.has(id))
+            .sort((a, b) => a[1].localeCompare(b[1]));
 
         listContainer.innerHTML = '';
         sortedEntries.forEach(([id, name]) => {
@@ -1206,6 +1241,7 @@
                 const newUnit = e.target.value === 'imperial' ? 'imperial' : 'metric';
                 const prev = getRuleForCountry(id);
                 countryRules.set(id, { unit: newUnit, multiUnit: prev.multiUnit });
+                customRuleIds.add(id);
                 saveSettings();
                 refreshCountryListUI(root);
                 checkAndSetUnits(true);
@@ -1218,6 +1254,7 @@
                     setCachedCountryName(id, name);
                     const prev = getRuleForCountry(id);
                     countryRules.set(id, { unit: prev.unit, multiUnit: e.target.checked });
+                    customRuleIds.add(id);
                     saveSettings();
                     refreshCountryListUI(root);
                     if (id === activeCountryId) {
@@ -1238,6 +1275,7 @@
             if (removeBtn) {
                 removeBtn.addEventListener('click', () => {
                     countryRules.delete(id);
+                    customRuleIds.delete(id);
                     saveSettings();
                     refreshCountryListUI(root);
                     checkAndSetUnits(true);
