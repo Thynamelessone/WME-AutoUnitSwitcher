@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.0.beta-10
+// @version      1.0.0.beta-11
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -74,21 +74,33 @@
         return clean.length >= 3 ? clean : 'wme-auto-unit-switcher';
     }
 
+    function isValidCountryName(name) {
+        return typeof name === 'string' && name.trim().length > 0 && !/^Country ID:\s*\d+$/i.test(name.trim());
+    }
+
+    function setCachedCountryName(id, name) {
+        if (typeof id !== 'number' || isNaN(id)) return false;
+        if (!isValidCountryName(name)) return false;
+        const cleanName = name.trim();
+        if (cachedCountryNames.get(id) !== cleanName) {
+            cachedCountryNames.set(id, cleanName);
+            return true;
+        }
+        return false;
+    }
+
     function loadSettings() {
-        // Load cached country names first
         cachedCountryNames = new Map(
             Object.entries(FALLBACK_NAMES).map(([id, name]) => [parseInt(id, 10), name])
         );
+
         try {
             const savedNames = localStorage.getItem(COUNTRY_NAMES_STORAGE_KEY);
             if (savedNames) {
                 const parsedNames = JSON.parse(savedNames);
                 if (parsedNames && typeof parsedNames === 'object') {
                     Object.entries(parsedNames).forEach(([idStr, name]) => {
-                        const id = parseInt(idStr, 10);
-                        if (!isNaN(id) && typeof name === 'string' && name.trim()) {
-                            cachedCountryNames.set(id, name.trim());
-                        }
+                        setCachedCountryName(parseInt(idStr, 10), name);
                     });
                 }
             }
@@ -118,9 +130,7 @@
                                 unit: cfg.unit,
                                 multiUnit: Boolean(cfg.multiUnit)
                             });
-                            if (typeof cfg.name === 'string' && cfg.name.trim()) {
-                                cachedCountryNames.set(id, cfg.name.trim());
-                            }
+                            setCachedCountryName(id, cfg.name);
                         }
                     });
                     countryRules = map;
@@ -168,7 +178,7 @@
                 obj[id] = {
                     unit: cfg.unit,
                     multiUnit: Boolean(cfg.multiUnit),
-                    ...(knownName ? { name: knownName } : {})
+                    ...(isValidCountryName(knownName) ? { name: knownName } : {})
                 };
             });
             localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
@@ -183,7 +193,9 @@
         try {
             const namesObj = {};
             cachedCountryNames.forEach((name, id) => {
-                namesObj[id] = name;
+                if (isValidCountryName(name)) {
+                    namesObj[id] = name;
+                }
             });
             localStorage.setItem(COUNTRY_NAMES_STORAGE_KEY, JSON.stringify(namesObj));
         } catch (e) {
@@ -191,36 +203,76 @@
         }
     }
 
-    function cacheLoadedCountryNames() {
+    function cacheLoadedCountryNames(extraIdsToLookup = []) {
         if (!sdk) return false;
         let updated = false;
 
-        const topCountry = sdk.DataModel.Countries.getTopCountry();
-        if (topCountry && typeof topCountry.id === 'number' && topCountry.name) {
-            if (cachedCountryNames.get(topCountry.id) !== topCountry.name) {
-                cachedCountryNames.set(topCountry.id, topCountry.name);
+        try {
+            const topCountry = sdk.DataModel.Countries.getTopCountry();
+            if (topCountry && setCachedCountryName(topCountry.id, topCountry.name)) {
                 updated = true;
             }
-        }
+        } catch (_) {}
 
-        const loadedCountries = sdk.DataModel.Countries.getAll() || [];
-        loadedCountries.forEach(c => {
-            if (c && typeof c.id === 'number' && c.name) {
-                if (cachedCountryNames.get(c.id) !== c.name) {
-                    cachedCountryNames.set(c.id, c.name);
+        try {
+            const loadedCountries = sdk.DataModel.Countries.getAll() || [];
+            loadedCountries.forEach(c => {
+                if (c && setCachedCountryName(c.id, c.name)) {
                     updated = true;
                 }
+            });
+        } catch (_) {}
+
+        // Also query getById for any configured country IDs not yet resolved
+        const idsToCheck = new Set([...countryRules.keys(), ...extraIdsToLookup]);
+        idsToCheck.forEach(id => {
+            if (!cachedCountryNames.has(id) && sdk.DataModel.Countries.getById) {
+                try {
+                    const c = sdk.DataModel.Countries.getById({ countryId: id });
+                    if (c && setCachedCountryName(c.id, c.name)) {
+                        updated = true;
+                    }
+                } catch (_) {}
             }
         });
 
         if (updated) {
             saveCountryNamesCache();
+            // Also persist names inside countryRules storage if any configured rule just gained a name
+            if (countryRules.size > 0) {
+                try {
+                    const obj = {};
+                    countryRules.forEach((cfg, id) => {
+                        const knownName = cachedCountryNames.get(id);
+                        obj[id] = {
+                            unit: cfg.unit,
+                            multiUnit: Boolean(cfg.multiUnit),
+                            ...(isValidCountryName(knownName) ? { name: knownName } : {})
+                        };
+                    });
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+                } catch (_) {}
+            }
         }
+
         return updated;
     }
 
     function getCountryName(countryId) {
-        return cachedCountryNames.get(countryId) || FALLBACK_NAMES[countryId] || `Country ID: ${countryId}`;
+        if (cachedCountryNames.has(countryId)) {
+            return cachedCountryNames.get(countryId);
+        }
+        if (sdk && sdk.DataModel && sdk.DataModel.Countries && sdk.DataModel.Countries.getById) {
+            try {
+                const c = sdk.DataModel.Countries.getById({ countryId });
+                if (c && isValidCountryName(c.name)) {
+                    setCachedCountryName(countryId, c.name);
+                    saveCountryNamesCache();
+                    return c.name.trim();
+                }
+            } catch (_) {}
+        }
+        return FALLBACK_NAMES[countryId] || `Country ID: ${countryId}`;
     }
 
     function getRuleForCountry(countryId) {
@@ -286,7 +338,7 @@
         if (hasWazeWrap && updateMessage && updateMessage.trim() !== "") {
             WazeWrap.Interface.ShowScriptUpdate(
                 displayName,
-                typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-9',
+                typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-10',
                 updateMessage,
                 USERSCRIPT_URL || "https://github.com/Thynamelessone/WME-AutoUnitSwitcher",
                 ""
@@ -297,7 +349,7 @@
         console.log(`${displayName}: Initialized with WME SDK.`);
     }
 
-    // --- Multi-Unit Conversion & Measure Tool DOM Helper ---
+    // --- Multi-Unit Conversion & Measure Tool (Light + Shadow DOM) ---
 
     function formatNumber(val) {
         return val >= 100
@@ -338,11 +390,34 @@
         });
     }
 
+    function traverseWithShadowRoots(rootNode, callback) {
+        if (!rootNode) return;
+        const walker = document.createTreeWalker(rootNode, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, null);
+        let current;
+        while ((current = walker.nextNode())) {
+            if (current.nodeType === Node.TEXT_NODE) {
+                callback(current);
+            } else if (current.nodeType === Node.ELEMENT_NODE) {
+                if (current.id === 'wme-aus-container') continue;
+                if (current.shadowRoot) {
+                    traverseWithShadowRoots(current.shadowRoot, callback);
+                }
+            }
+        }
+    }
+
     function clearMultiUnitNodes() {
-        document.querySelectorAll('.wme-aus-extra-unit').forEach(el => el.remove());
-        document.querySelectorAll('[data-wme-aus-val]').forEach(el => {
-            delete el.dataset.wmeAusVal;
-        });
+        const removeInRoot = (root) => {
+            if (!root) return;
+            root.querySelectorAll('.wme-aus-extra-unit').forEach(el => el.remove());
+            root.querySelectorAll('[data-wme-aus-val]').forEach(el => {
+                delete el.dataset.wmeAusVal;
+            });
+            root.querySelectorAll('*').forEach(el => {
+                if (el.shadowRoot) removeInRoot(el.shadowRoot);
+            });
+        };
+        removeInRoot(document.body);
     }
 
     function updateMultiUnitNodes() {
@@ -351,60 +426,36 @@
             return;
         }
 
-        const elements = new Set();
+        const candidateElements = new Set();
 
-        const candidateSelectors = [
-            '.ol-scale-line-inner',
-            '.wm-scale-bar',
-            '[class*="scale"] [class*="label"]',
-            '#edit-panel .length',
-            '#edit-panel [class*="length"]',
-            '#edit-panel [class*="distance"]',
-            '#segment-edit-general .length',
-            '.segment-length',
-            '.waze-control-scale-line-inner',
-            '[class*="measure"] [class*="label"]',
-            '[class*="measure"] [class*="tooltip"]',
-            '[class*="measure"] span',
-            '[class*="measure"] div',
-            '.ol-tooltip',
-            '.ol-tooltip-measure',
-            '.ol-overlay-container span',
-            '.ol-overlay-container div'
-        ];
+        // Traverse document.body including all open Shadow Roots (covers measure tool tooltips, scale bar, edit panel)
+        traverseWithShadowRoots(document.body, (textNode) => {
+            const parent = textNode.parentElement;
+            if (!parent) return;
+            if (parent.closest && parent.closest('#wme-aus-container')) return;
+            if (parent.classList && parent.classList.contains('wme-aus-extra-unit')) return;
+            const tag = parent.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'SCRIPT' || tag === 'STYLE' || tag === 'OPTION') return;
 
-        candidateSelectors.forEach(sel => {
-            document.querySelectorAll(sel).forEach(el => elements.add(el));
-        });
+            const txt = textNode.nodeValue ? textNode.nodeValue.trim() : '';
+            if (!txt) return;
 
-        const scanRoots = [
-            document.getElementById('edit-panel'),
-            document.getElementById('map')
-        ].filter(Boolean);
-
-        scanRoots.forEach(root => {
-            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-            let node;
-            while ((node = walker.nextNode())) {
-                const parent = node.parentElement;
-                if (!parent || parent.closest('#wme-aus-container') || parent.classList.contains('wme-aus-extra-unit')) continue;
-                if (parent.tagName === 'INPUT' || parent.tagName === 'TEXTAREA' || parent.tagName === 'SELECT' || parent.tagName === 'SCRIPT' || parent.tagName === 'STYLE') continue;
-
-                const txt = node.nodeValue ? node.nodeValue.trim() : '';
-                if (/^\d[\d,.]*\s*(ft|feet|m|meters?|metres?)\b/i.test(txt)) {
-                    elements.add(parent);
-                }
+            // Match standalone distance strings (e.g. "150 ft", "1,200 m", "45.5 meters")
+            if (/^\d[\d,.]*\s*(ft|feet|m|meters?|metres?)\b/i.test(txt)) {
+                candidateElements.add(parent);
             }
         });
 
-        elements.forEach(el => {
-            if (el.closest('#wme-aus-container')) return;
-            if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return;
+        candidateElements.forEach(el => {
+            if (el.closest && el.closest('#wme-aus-container')) return;
 
-            if (el.children.length > 1 || (el.children.length === 1 && !el.children[0].classList.contains('wme-aus-extra-unit'))) {
-                return;
-            }
+            // Skip container elements that hold multiple distinct child elements
+            const nonBadgeChildren = Array.from(el.children).filter(
+                c => !c.classList.contains('wme-aus-extra-unit')
+            );
+            if (nonBadgeChildren.length > 0) return;
 
+            // Extract raw text excluding our injected badge
             let rawText = '';
             el.childNodes.forEach(child => {
                 if (child.nodeType === Node.TEXT_NODE) {
@@ -437,10 +488,12 @@
             if (!badge) {
                 badge = document.createElement('span');
                 badge.className = 'wme-aus-extra-unit';
+                // Inline styling ensures visibility even inside Shadow DOM components
+                badge.style.cssText = 'font-size: 0.9em; opacity: 0.9; font-weight: 500; white-space: nowrap; margin-left: 4px;';
                 el.appendChild(badge);
             }
 
-            badge.textContent = ` ${isFeet ? formatConversionFromFeet(numericVal) : formatConversionFromMeters(numericVal)}`;
+            badge.textContent = isFeet ? formatConversionFromFeet(numericVal) : formatConversionFromMeters(numericVal);
         });
     }
 
@@ -452,13 +505,6 @@
         const style = document.createElement('style');
         style.id = 'wme-aus-styles';
         style.textContent = `
-            .wme-aus-extra-unit {
-                font-size: 0.9em;
-                opacity: 0.88;
-                font-weight: 500;
-                white-space: nowrap;
-            }
-
             #wme-aus-container {
                 --aus-bg: var(--wme-studio-surface, var(--background_default, #ffffff));
                 --aus-text: var(--wme-studio-text, var(--content_default, #202124));
@@ -732,6 +778,8 @@
         const countryId = topCountry.id;
         activeCountryId = countryId;
 
+        setCachedCountryName(countryId, topCountry.name);
+
         if (!isMultiUnitActiveForCurrentCountry()) {
             clearMultiUnitNodes();
         }
@@ -772,7 +820,7 @@
     // --- UI & Sidebar Registration (SDK) ---
 
     function buildUIElement(displayName) {
-        const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-9';
+        const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-10';
 
         const container = document.createElement('div');
         container.id = 'wme-aus-container';
@@ -837,7 +885,7 @@
             const val = parseInt(addInput.value.trim(), 10);
             const selectedUnit = addUnitSelect.value === 'imperial' ? 'imperial' : 'metric';
             if (!isNaN(val) && val > 0) {
-                cacheLoadedCountryNames();
+                cacheLoadedCountryNames([val]);
                 const existing = countryRules.get(val);
                 countryRules.set(val, {
                     unit: selectedUnit,
@@ -929,6 +977,15 @@
         const listContainer = root.querySelector('#wme-aus-country-list');
         if (!listContainer || !sdk) return;
 
+        // Harvest any valid country names currently rendered in the list before clearing it
+        listContainer.querySelectorAll('.wme-aus-country-row').forEach(row => {
+            const idAttr = parseInt(row.dataset.countryId, 10);
+            const nameAttr = row.dataset.countryName;
+            if (!isNaN(idAttr) && isValidCountryName(nameAttr)) {
+                setCachedCountryName(idAttr, nameAttr);
+            }
+        });
+
         cacheLoadedCountryNames();
 
         const knownCountries = new Map();
@@ -937,6 +994,7 @@
         const loadedCountries = sdk.DataModel.Countries.getAll() || [];
         loadedCountries.forEach(c => {
             if (c && typeof c.id === 'number') {
+                setCachedCountryName(c.id, c.name);
                 knownCountries.set(c.id, getCountryName(c.id));
             }
         });
@@ -963,6 +1021,8 @@
 
             const row = document.createElement('div');
             row.className = 'wme-aus-country-row';
+            row.dataset.countryId = String(id);
+            row.dataset.countryName = name;
 
             row.innerHTML = `
                 <span class="wme-aus-country-info" title="${name} (${id})">
@@ -985,6 +1045,7 @@
 
             const select = row.querySelector('.wme-aus-unit-select');
             select.addEventListener('change', (e) => {
+                setCachedCountryName(id, name);
                 const newUnit = e.target.value === 'imperial' ? 'imperial' : 'metric';
                 const prev = getRuleForCountry(id);
                 countryRules.set(id, { unit: newUnit, multiUnit: prev.multiUnit });
@@ -997,6 +1058,7 @@
             const multiChk = row.querySelector('.wme-aus-multi-toggle input');
             if (multiChk) {
                 multiChk.addEventListener('change', (e) => {
+                    setCachedCountryName(id, name);
                     const prev = getRuleForCountry(id);
                     countryRules.set(id, { unit: prev.unit, multiUnit: e.target.checked });
                     saveSettings();
