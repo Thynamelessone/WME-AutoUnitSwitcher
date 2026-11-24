@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.0.beta-8
+// @version      1.0.0.beta-9
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -23,11 +23,10 @@
     const updateMessage = "";
     const USERSCRIPT_URL = "";
 
-    const STORAGE_KEY = 'wme_auto_unit_switcher_country_rules';
-    const UK_HYBRID_STORAGE_KEY = 'wme_auto_unit_switcher_uk_hybrid';
-    const LEGACY_STORAGE_KEY = 'wme_auto_unit_switcher_imperial_ids';
-
-    const UK_COUNTRY_ID = 234;
+    const STORAGE_KEY = 'wme_auto_unit_switcher_country_rules_v2';
+    const GLOBAL_MULTI_UNIT_KEY = 'wme_auto_unit_switcher_global_multi_unit';
+    const LEGACY_V1_STORAGE_KEY = 'wme_auto_unit_switcher_country_rules';
+    const LEGACY_UK_HYBRID_KEY = 'wme_auto_unit_switcher_uk_hybrid';
 
     // 64x64 inline SVG ruler icon for WME Studio's script bar
     const SCRIPT_ICON_DATA_URL = 'data:image/svg+xml;utf8,' + encodeURIComponent(
@@ -37,14 +36,13 @@
         '</svg>'
     );
 
-    // Default Country Rules ('imperial' | 'metric')
-    // Unlisted countries fall back to 'metric'
+    // Default Country Rules: { unit: 'imperial' | 'metric', multiUnit: boolean }
     const DEFAULT_COUNTRY_RULES = {
-        235: 'imperial', // United States
-        234: 'imperial', // United Kingdom
-        182: 'imperial', // Puerto Rico
-        88: 'imperial',  // Guam
-        236: 'imperial'  // U.S. Virgin Islands
+        235: { unit: 'imperial', multiUnit: false }, // United States
+        234: { unit: 'imperial', multiUnit: true },  // United Kingdom (ft + yd/m)
+        182: { unit: 'imperial', multiUnit: false }, // Puerto Rico
+        88:  { unit: 'imperial', multiUnit: false }, // Guam
+        236: { unit: 'imperial', multiUnit: false }  // U.S. Virgin Islands
     };
 
     const FALLBACK_NAMES = {
@@ -56,13 +54,13 @@
     };
 
     let sdk = null;
-    // Map<number, 'imperial' | 'metric'>
-    let countryUnitRules = new Map();
-    let enableUkHybridReadout = true;
+    // Map<number, { unit: 'imperial' | 'metric', multiUnit: boolean }>
+    let countryRules = new Map();
+    let globalMultiUnit = false;
     let lastCountryId = null;
-    let isCurrentlyInUK = false;
-    let ukObserver = null;
-    let ukScanScheduled = false;
+    let activeCountryId = null;
+    let multiUnitObserver = null;
+    let scanScheduled = false;
 
     function getDisplayName() {
         return (SCRIPT_NAME && SCRIPT_NAME.trim()) || (typeof GM_info !== 'undefined' && GM_info.script.name) || 'WME Auto Unit Switcher';
@@ -75,12 +73,12 @@
 
     function loadSettings() {
         try {
-            const ukSaved = localStorage.getItem(UK_HYBRID_STORAGE_KEY);
-            if (ukSaved !== null) {
-                enableUkHybridReadout = ukSaved === 'true';
+            const globalSaved = localStorage.getItem(GLOBAL_MULTI_UNIT_KEY);
+            if (globalSaved !== null) {
+                globalMultiUnit = globalSaved === 'true';
             }
         } catch (e) {
-            console.error(`${getDisplayName()}: Error loading UK hybrid setting.`, e);
+            console.error(`${getDisplayName()}: Error loading global multi-unit setting.`, e);
         }
 
         try {
@@ -89,27 +87,39 @@
                 const parsed = JSON.parse(saved);
                 if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
                     const map = new Map();
-                    Object.entries(parsed).forEach(([idStr, unit]) => {
+                    Object.entries(parsed).forEach(([idStr, cfg]) => {
                         const id = parseInt(idStr, 10);
-                        if (!isNaN(id) && (unit === 'imperial' || unit === 'metric')) {
-                            map.set(id, unit);
+                        if (!isNaN(id) && cfg && (cfg.unit === 'imperial' || cfg.unit === 'metric')) {
+                            map.set(id, {
+                                unit: cfg.unit,
+                                multiUnit: Boolean(cfg.multiUnit)
+                            });
                         }
                     });
-                    countryUnitRules = map;
+                    countryRules = map;
                     return;
                 }
             }
 
-            // Migrate legacy v1 imperial-only array if present
-            const legacySaved = localStorage.getItem(LEGACY_STORAGE_KEY);
+            // Migrate legacy v1 rules if present
+            const legacySaved = localStorage.getItem(LEGACY_V1_STORAGE_KEY);
             if (legacySaved) {
                 const legacyParsed = JSON.parse(legacySaved);
-                if (Array.isArray(legacyParsed)) {
+                const legacyUk = localStorage.getItem(LEGACY_UK_HYBRID_KEY);
+                const ukEnabled = legacyUk !== null ? legacyUk === 'true' : true;
+
+                if (legacyParsed && typeof legacyParsed === 'object') {
                     const map = new Map();
-                    legacyParsed.forEach(id => {
-                        if (typeof id === 'number') map.set(id, 'imperial');
+                    Object.entries(legacyParsed).forEach(([idStr, unit]) => {
+                        const id = parseInt(idStr, 10);
+                        if (!isNaN(id) && (unit === 'imperial' || unit === 'metric')) {
+                            map.set(id, {
+                                unit,
+                                multiUnit: id === 234 ? ukEnabled : false
+                            });
+                        }
                     });
-                    countryUnitRules = map;
+                    countryRules = map;
                     saveSettings();
                     return;
                 }
@@ -118,26 +128,32 @@
             console.error(`${getDisplayName()}: Error loading settings, using defaults.`, e);
         }
 
-        countryUnitRules = new Map(
-            Object.entries(DEFAULT_COUNTRY_RULES).map(([id, unit]) => [parseInt(id, 10), unit])
+        countryRules = new Map(
+            Object.entries(DEFAULT_COUNTRY_RULES).map(([id, cfg]) => [parseInt(id, 10), { ...cfg }])
         );
     }
 
     function saveSettings() {
         try {
             const obj = {};
-            countryUnitRules.forEach((unit, id) => {
-                obj[id] = unit;
+            countryRules.forEach((cfg, id) => {
+                obj[id] = { unit: cfg.unit, multiUnit: Boolean(cfg.multiUnit) };
             });
             localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
-            localStorage.setItem(UK_HYBRID_STORAGE_KEY, String(enableUkHybridReadout));
+            localStorage.setItem(GLOBAL_MULTI_UNIT_KEY, String(globalMultiUnit));
         } catch (e) {
             console.error(`${getDisplayName()}: Error saving settings.`, e);
         }
     }
 
-    function getUnitForCountry(countryId) {
-        return countryUnitRules.get(countryId) || 'metric';
+    function getRuleForCountry(countryId) {
+        return countryRules.get(countryId) || { unit: 'metric', multiUnit: false };
+    }
+
+    function isMultiUnitActiveForCurrentCountry() {
+        if (globalMultiUnit) return true;
+        if (activeCountryId == null) return false;
+        return Boolean(getRuleForCountry(activeCountryId).multiUnit);
     }
 
     // --- SDK & WazeWrap Bootstrap ---
@@ -185,7 +201,7 @@
         loadSettings();
         injectStudioStyles();
         await registerSidebarTab(displayName);
-        setupUkHybridObserver();
+        setupMultiUnitObserver();
 
         sdk.Events.on({ eventName: 'wme-map-move-end', eventHandler: onMapUpdate });
         sdk.Events.on({ eventName: 'wme-map-data-loaded', eventHandler: onMapUpdate });
@@ -193,7 +209,7 @@
         if (hasWazeWrap && updateMessage && updateMessage.trim() !== "") {
             WazeWrap.Interface.ShowScriptUpdate(
                 displayName,
-                typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-7',
+                typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-8',
                 updateMessage,
                 USERSCRIPT_URL || "https://github.com/Thynamelessone/WME-AutoUnitSwitcher",
                 ""
@@ -204,53 +220,63 @@
         console.log(`${displayName}: Initialized with WME SDK.`);
     }
 
-    // --- UK Yards & Meters DOM Helper ---
+    // --- Multi-Unit Conversion & Measure Tool DOM Helper ---
 
-    function formatUkConversion(feetValue) {
-        const yards = feetValue / 3;
-        const meters = feetValue * 0.3048;
-
-        const ydStr = yards >= 100 ? Math.round(yards).toLocaleString() : yards.toFixed(1).replace(/\.0$/, '');
-        const mStr = meters >= 100 ? Math.round(meters).toLocaleString() : meters.toFixed(1).replace(/\.0$/, '');
-
-        return `(${ydStr} yd / ${mStr} m)`;
+    function formatNumber(val) {
+        return val >= 100
+            ? Math.round(val).toLocaleString()
+            : val.toFixed(1).replace(/\.0$/, '');
     }
 
-    function setupUkHybridObserver() {
-        if (ukObserver) return;
+    function formatConversionFromFeet(feetValue) {
+        const yards = feetValue / 3;
+        const meters = feetValue * 0.3048;
+        return `(${formatNumber(yards)} yd / ${formatNumber(meters)} m)`;
+    }
 
-        ukObserver = new MutationObserver(() => {
-            if (!isCurrentlyInUK || !enableUkHybridReadout) return;
-            if (ukScanScheduled) return;
+    function formatConversionFromMeters(metersValue) {
+        const yards = metersValue / 0.9144;
+        const feet = metersValue / 0.3048;
+        return `(${formatNumber(yards)} yd / ${formatNumber(feet)} ft)`;
+    }
 
-            ukScanScheduled = true;
+    function setupMultiUnitObserver() {
+        if (multiUnitObserver) return;
+
+        multiUnitObserver = new MutationObserver(() => {
+            if (!isMultiUnitActiveForCurrentCountry()) return;
+            if (scanScheduled) return;
+
+            scanScheduled = true;
             requestAnimationFrame(() => {
-                ukScanScheduled = false;
-                updateUkHybridNodes();
+                scanScheduled = false;
+                updateMultiUnitNodes();
             });
         });
 
-        ukObserver.observe(document.body, {
+        multiUnitObserver.observe(document.body, {
             childList: true,
             subtree: true,
             characterData: true
         });
     }
 
-    function clearUkHybridNodes() {
-        document.querySelectorAll('.wme-aus-uk-extra').forEach(el => el.remove());
-        document.querySelectorAll('[data-wme-aus-ft]').forEach(el => {
-            delete el.dataset.wmeAusFt;
+    function clearMultiUnitNodes() {
+        document.querySelectorAll('.wme-aus-extra-unit').forEach(el => el.remove());
+        document.querySelectorAll('[data-wme-aus-val]').forEach(el => {
+            delete el.dataset.wmeAusVal;
         });
     }
 
-    function updateUkHybridNodes() {
-        if (!isCurrentlyInUK || !enableUkHybridReadout) {
-            clearUkHybridNodes();
+    function updateMultiUnitNodes() {
+        if (!isMultiUnitActiveForCurrentCountry()) {
+            clearMultiUnitNodes();
             return;
         }
 
-        // Target selectors for WME's map scale bar, segment length readouts, and distance labels
+        const elements = new Set();
+
+        // Explicit selectors for scale bar, segment length, and measure tool overlays
         const candidateSelectors = [
             '.ol-scale-line-inner',
             '.wm-scale-bar',
@@ -260,30 +286,37 @@
             '#edit-panel [class*="distance"]',
             '#segment-edit-general .length',
             '.segment-length',
-            '.waze-control-scale-line-inner'
+            '.waze-control-scale-line-inner',
+            '[class*="measure"] [class*="label"]',
+            '[class*="measure"] [class*="tooltip"]',
+            '[class*="measure"] span',
+            '[class*="measure"] div',
+            '.ol-tooltip',
+            '.ol-tooltip-measure',
+            '.ol-overlay-container span',
+            '.ol-overlay-container div'
         ];
 
-        const elements = new Set();
         candidateSelectors.forEach(sel => {
             document.querySelectorAll(sel).forEach(el => elements.add(el));
         });
 
-        // Also scan compact leaf text elements inside the edit sidebar and map scale controls
-        const containers = [
+        // Walk text nodes inside the edit panel and the entire map container (covers measure tool, drawing tooltips, scale bar)
+        const scanRoots = [
             document.getElementById('edit-panel'),
-            document.querySelector('.ol-overlaycontainer-stopevent')
+            document.getElementById('map')
         ].filter(Boolean);
 
-        containers.forEach(container => {
-            const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+        scanRoots.forEach(root => {
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
             let node;
             while ((node = walker.nextNode())) {
                 const parent = node.parentElement;
-                if (!parent || parent.closest('#wme-aus-container') || parent.classList.contains('wme-aus-uk-extra')) continue;
-                if (parent.tagName === 'INPUT' || parent.tagName === 'TEXTAREA' || parent.tagName === 'SELECT') continue;
+                if (!parent || parent.closest('#wme-aus-container') || parent.classList.contains('wme-aus-extra-unit')) continue;
+                if (parent.tagName === 'INPUT' || parent.tagName === 'TEXTAREA' || parent.tagName === 'SELECT' || parent.tagName === 'SCRIPT' || parent.tagName === 'STYLE') continue;
 
                 const txt = node.nodeValue ? node.nodeValue.trim() : '';
-                if (/^\d[\d,.]*\s*(ft|feet)\b/i.test(txt)) {
+                if (/^\d[\d,.]*\s*(ft|feet|m|meters?|metres?)\b/i.test(txt)) {
                     elements.add(parent);
                 }
             }
@@ -291,40 +324,50 @@
 
         elements.forEach(el => {
             if (el.closest('#wme-aus-container')) return;
+            if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return;
 
-            // Read text excluding our own injected badge
+            // Avoid attaching to large wrapper divs that contain child block elements
+            if (el.children.length > 1 || (el.children.length === 1 && !el.children[0].classList.contains('wme-aus-extra-unit'))) {
+                return;
+            }
+
+            // Read raw text excluding our own injected badge
             let rawText = '';
             el.childNodes.forEach(child => {
                 if (child.nodeType === Node.TEXT_NODE) {
                     rawText += child.nodeValue;
-                } else if (child.nodeType === Node.ELEMENT_NODE && !child.classList.contains('wme-aus-uk-extra')) {
+                } else if (child.nodeType === Node.ELEMENT_NODE && !child.classList.contains('wme-aus-extra-unit')) {
                     rawText += child.textContent;
                 }
             });
 
-            const match = rawText.trim().match(/^(\d[\d,]*\.?\d*)\s*(ft|feet)\b/i);
+            const match = rawText.trim().match(/^(\d[\d,]*\.?\d*)\s*(ft|feet|m|meters?|metres?)\b/i);
             if (!match) {
-                const existing = el.querySelector('.wme-aus-uk-extra');
+                const existing = el.querySelector('.wme-aus-extra-unit');
                 if (existing) existing.remove();
-                delete el.dataset.wmeAusFt;
+                delete el.dataset.wmeAusVal;
                 return;
             }
 
-            const feet = parseFloat(match[1].replace(/,/g, ''));
-            if (isNaN(feet) || feet <= 0) return;
+            const numericVal = parseFloat(match[1].replace(/,/g, ''));
+            const unitToken = match[2].toLowerCase();
 
-            const key = String(feet);
-            let badge = el.querySelector('.wme-aus-uk-extra');
+            if (isNaN(numericVal) || numericVal <= 0) return;
 
-            if (el.dataset.wmeAusFt === key && badge) return;
-            el.dataset.wmeAusFt = key;
+            const isFeet = unitToken === 'ft' || unitToken === 'feet';
+            const stateKey = `${isFeet ? 'ft' : 'm'}:${numericVal}`;
+
+            let badge = el.querySelector('.wme-aus-extra-unit');
+            if (el.dataset.wmeAusVal === stateKey && badge) return;
+            el.dataset.wmeAusVal = stateKey;
 
             if (!badge) {
                 badge = document.createElement('span');
-                badge.className = 'wme-aus-uk-extra';
+                badge.className = 'wme-aus-extra-unit';
                 el.appendChild(badge);
             }
-            badge.textContent = ` ${formatUkConversion(feet)}`;
+
+            badge.textContent = ` ${isFeet ? formatConversionFromFeet(numericVal) : formatConversionFromMeters(numericVal)}`;
         });
     }
 
@@ -336,9 +379,9 @@
         const style = document.createElement('style');
         style.id = 'wme-aus-styles';
         style.textContent = `
-            .wme-aus-uk-extra {
+            .wme-aus-extra-unit {
                 font-size: 0.9em;
-                opacity: 0.85;
+                opacity: 0.88;
                 font-weight: 500;
                 white-space: nowrap;
             }
@@ -507,7 +550,7 @@
             .wme-aus-row-controls {
                 display: flex;
                 align-items: center;
-                gap: 4px;
+                gap: 5px;
                 flex-shrink: 0;
             }
 
@@ -530,8 +573,34 @@
                 color: #4caf50;
             }
 
+            .wme-aus-multi-toggle {
+                display: inline-flex;
+                align-items: center;
+                gap: 3px;
+                padding: 2px 5px;
+                background: var(--aus-bg);
+                border: 1px solid var(--aus-border);
+                border-radius: var(--aus-radius);
+                font-size: 10px;
+                color: var(--aus-muted);
+                cursor: pointer;
+                margin: 0;
+                user-select: none;
+            }
+
+            .wme-aus-multi-toggle input {
+                margin: 0;
+                cursor: pointer;
+            }
+
+            .wme-aus-multi-toggle.is-active {
+                color: var(--aus-accent);
+                border-color: var(--aus-accent);
+                font-weight: 600;
+            }
+
             .wme-aus-remove-btn {
-                padding: 1px 6px;
+                padding: 1px 5px;
                 background: transparent;
                 color: var(--aus-muted);
                 border: 1px solid transparent;
@@ -577,7 +646,7 @@
     function onMapUpdate() {
         checkAndSetUnits();
         refreshCountryListUI();
-        updateUkHybridNodes();
+        updateMultiUnitNodes();
     }
 
     function checkAndSetUnits(force = false) {
@@ -587,17 +656,17 @@
         if (!topCountry) return;
 
         const countryId = topCountry.id;
-        isCurrentlyInUK = countryId === UK_COUNTRY_ID;
+        activeCountryId = countryId;
 
-        if (!isCurrentlyInUK) {
-            clearUkHybridNodes();
+        if (!isMultiUnitActiveForCurrentCountry()) {
+            clearMultiUnitNodes();
         }
 
         if (!force && countryId === lastCountryId) return;
         lastCountryId = countryId;
 
-        const unitMode = getUnitForCountry(countryId);
-        const shouldBeImperial = unitMode === 'imperial';
+        const rule = getRuleForCountry(countryId);
+        const shouldBeImperial = rule.unit === 'imperial';
         const prefs = sdk.Settings.getUserSettings();
         const isCurrentlyImperial = Boolean(prefs && prefs.isImperial);
 
@@ -630,7 +699,7 @@
     // --- UI & Sidebar Registration (SDK) ---
 
     function buildUIElement(displayName) {
-        const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-7';
+        const version = typeof GM_info !== 'undefined' ? GM_info.script.version : '1.0.0.beta-8';
 
         const container = document.createElement('div');
         container.id = 'wme-aus-container';
@@ -645,10 +714,10 @@
             </div>
 
             <label class="wme-aus-option-box">
-                <input type="checkbox" id="wme-aus-uk-hybrid-chk" ${enableUkHybridReadout ? 'checked' : ''} />
+                <input type="checkbox" id="wme-aus-global-multi-chk" ${globalMultiUnit ? 'checked' : ''} />
                 <span>
-                    <b>UK Yards & Meters Helper</b><br>
-                    <small style="color: var(--aus-muted);">Show <code>(yd / m)</code> next to feet in the UK (ID 234).</small>
+                    <b>Show Multiple Units Globally</b><br>
+                    <small style="color: var(--aus-muted);">Show <code>(yd / m)</code> or <code>(yd / ft)</code> in all countries and hide per-country toggles.</small>
                 </span>
             </label>
 
@@ -674,19 +743,20 @@
             </div>
         `;
 
-        const ukHybridChk = container.querySelector('#wme-aus-uk-hybrid-chk');
+        const globalMultiChk = container.querySelector('#wme-aus-global-multi-chk');
         const addBtn = container.querySelector('#wme-aus-add-btn');
         const addInput = container.querySelector('#wme-aus-add-id');
         const addUnitSelect = container.querySelector('#wme-aus-add-unit');
         const resetBtn = container.querySelector('#wme-aus-reset-btn');
 
-        ukHybridChk.addEventListener('change', (e) => {
-            enableUkHybridReadout = e.target.checked;
+        globalMultiChk.addEventListener('change', (e) => {
+            globalMultiUnit = e.target.checked;
             saveSettings();
-            if (enableUkHybridReadout) {
-                updateUkHybridNodes();
+            refreshCountryListUI(container);
+            if (isMultiUnitActiveForCurrentCountry()) {
+                updateMultiUnitNodes();
             } else {
-                clearUkHybridNodes();
+                clearMultiUnitNodes();
             }
         });
 
@@ -694,7 +764,11 @@
             const val = parseInt(addInput.value.trim(), 10);
             const selectedUnit = addUnitSelect.value === 'imperial' ? 'imperial' : 'metric';
             if (!isNaN(val) && val > 0) {
-                countryUnitRules.set(val, selectedUnit);
+                const existing = countryRules.get(val);
+                countryRules.set(val, {
+                    unit: selectedUnit,
+                    multiUnit: existing ? existing.multiUnit : false
+                });
                 saveSettings();
                 addInput.value = '';
                 refreshCountryListUI(container);
@@ -708,21 +782,25 @@
         });
 
         resetBtn.addEventListener('click', () => {
-            countryUnitRules = new Map(
-                Object.entries(DEFAULT_COUNTRY_RULES).map(([id, unit]) => [parseInt(id, 10), unit])
+            countryRules = new Map(
+                Object.entries(DEFAULT_COUNTRY_RULES).map(([id, cfg]) => [parseInt(id, 10), { ...cfg }])
             );
-            enableUkHybridReadout = true;
-            ukHybridChk.checked = true;
+            globalMultiUnit = false;
+            globalMultiChk.checked = false;
             saveSettings();
             refreshCountryListUI(container);
             checkAndSetUnits(true);
-            updateUkHybridNodes();
+            if (isMultiUnitActiveForCurrentCountry()) {
+                updateMultiUnitNodes();
+            } else {
+                clearMultiUnitNodes();
+            }
         });
 
         refreshCountryListUI(container);
         const topCountry = sdk.DataModel.Countries.getTopCountry();
         if (topCountry) {
-            const isImp = getUnitForCountry(topCountry.id) === 'imperial';
+            const isImp = getRuleForCountry(topCountry.id).unit === 'imperial';
             updateStatusBanner(topCountry.name, isImp, container);
         }
 
@@ -765,7 +843,10 @@
     function updateStatusBanner(countryName, isImperial, root = document) {
         const statusEl = root.querySelector('#wme-aus-status');
         if (statusEl) {
-            statusEl.innerHTML = `Active: <b>${countryName}</b><br>Mode: <b>${isImperial ? 'Imperial (ft/mi)' : 'Metric (m/km)'}</b>`;
+            const multiLabel = isMultiUnitActiveForCurrentCountry()
+                ? (isImperial ? ' + yd/m' : ' + yd/ft')
+                : '';
+            statusEl.innerHTML = `Active: <b>${countryName}</b><br>Mode: <b>${isImperial ? 'Imperial (ft/mi)' : 'Metric (m/km)'}${multiLabel}</b>`;
         }
     }
 
@@ -782,7 +863,7 @@
             }
         });
 
-        countryUnitRules.forEach((unit, id) => {
+        countryRules.forEach((cfg, id) => {
             if (!knownCountries.has(id)) {
                 knownCountries.set(id, FALLBACK_NAMES[id] || `Country ID: ${id}`);
             }
@@ -792,8 +873,14 @@
 
         listContainer.innerHTML = '';
         sortedEntries.forEach(([id, name]) => {
-            const currentUnit = getUnitForCountry(id);
-            const hasExplicitRule = countryUnitRules.has(id);
+            const rule = getRuleForCountry(id);
+            const currentUnit = rule.unit;
+            const isMulti = Boolean(rule.multiUnit);
+            const hasExplicitRule = countryRules.has(id);
+            const multiToggleLabel = currentUnit === 'imperial' ? '+yd/m' : '+yd/ft';
+            const multiToggleTitle = currentUnit === 'imperial'
+                ? 'Show Yards & Meters next to Feet'
+                : 'Show Yards & Feet next to Meters';
 
             const row = document.createElement('div');
             row.className = 'wme-aus-country-row';
@@ -807,6 +894,12 @@
                         <option value="imperial" ${currentUnit === 'imperial' ? 'selected' : ''}>Imperial</option>
                         <option value="metric" ${currentUnit === 'metric' ? 'selected' : ''}>Metric</option>
                     </select>
+                    ${!globalMultiUnit ? `
+                        <label class="wme-aus-multi-toggle ${isMulti ? 'is-active' : ''}" title="${multiToggleTitle}">
+                            <input type="checkbox" ${isMulti ? 'checked' : ''} />
+                            <span>${multiToggleLabel}</span>
+                        </label>
+                    ` : ''}
                     ${hasExplicitRule ? `<button type="button" class="wme-aus-remove-btn" title="Remove custom rule">✕</button>` : ''}
                 </span>
             `;
@@ -814,19 +907,43 @@
             const select = row.querySelector('.wme-aus-unit-select');
             select.addEventListener('change', (e) => {
                 const newUnit = e.target.value === 'imperial' ? 'imperial' : 'metric';
-                countryUnitRules.set(id, newUnit);
+                const prev = getRuleForCountry(id);
+                countryRules.set(id, { unit: newUnit, multiUnit: prev.multiUnit });
                 saveSettings();
                 refreshCountryListUI(root);
                 checkAndSetUnits(true);
+                updateMultiUnitNodes();
             });
+
+            const multiChk = row.querySelector('.wme-aus-multi-toggle input');
+            if (multiChk) {
+                multiChk.addEventListener('change', (e) => {
+                    const prev = getRuleForCountry(id);
+                    countryRules.set(id, { unit: prev.unit, multiUnit: e.target.checked });
+                    saveSettings();
+                    refreshCountryListUI(root);
+                    if (id === activeCountryId) {
+                        const topCountry = sdk.DataModel.Countries.getTopCountry();
+                        if (topCountry) {
+                            updateStatusBanner(topCountry.name, prev.unit === 'imperial', root);
+                        }
+                        if (isMultiUnitActiveForCurrentCountry()) {
+                            updateMultiUnitNodes();
+                        } else {
+                            clearMultiUnitNodes();
+                        }
+                    }
+                });
+            }
 
             const removeBtn = row.querySelector('.wme-aus-remove-btn');
             if (removeBtn) {
                 removeBtn.addEventListener('click', () => {
-                    countryUnitRules.delete(id);
+                    countryRules.delete(id);
                     saveSettings();
                     refreshCountryListUI(root);
                     checkAndSetUnits(true);
+                    updateMultiUnitNodes();
                 });
             }
 
