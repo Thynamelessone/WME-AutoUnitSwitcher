@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.4.beta-3
+// @version      1.0.5.beta-1
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -21,7 +21,7 @@
     const SCRIPT_ID = "WME AUS";
     const SCRIPT_NAME = "WME Auto Unit Switcher";
     const updateMessage = "";
-    const USERSCRIPT_URL = "";
+    const USERSCRIPT_URL = "Fixed support for WME MapCommentGeometry script";
 
     const STORAGE_KEY = 'wme_auto_unit_switcher_country_rules_v2';
     const CUSTOM_RULE_IDS_KEY = 'wme_auto_unit_switcher_custom_rule_ids';
@@ -519,13 +519,10 @@
         const walker = document.createTreeWalker(rootNode, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, null);
         let current;
         while ((current = walker.nextNode())) {
-            if (current.nodeType === Node.TEXT_NODE) {
-                callback(current);
-            } else if (current.nodeType === Node.ELEMENT_NODE) {
-                if (current.id === 'wme-aus-container') continue;
-                if (current.shadowRoot) {
-                    traverseWithShadowRoots(current.shadowRoot, callback);
-                }
+            if (current.nodeType === Node.ELEMENT_NODE && current.id === 'wme-aus-container') continue;
+            callback(current);
+            if (current.nodeType === Node.ELEMENT_NODE && current.shadowRoot) {
+                traverseWithShadowRoots(current.shadowRoot, callback);
             }
         }
     }
@@ -544,6 +541,12 @@
         removeInRoot(document.body);
     }
 
+    function removeBadgeFromElement(el) {
+        if (!el) return;
+        el.querySelectorAll('.wme-aus-extra-unit').forEach(badge => badge.remove());
+        delete el.dataset.wmeAusVal;
+    }
+
     function updateMultiUnitNodes() {
         if (!isMultiUnitActiveForCurrentCountry()) {
             clearMultiUnitNodes();
@@ -552,19 +555,29 @@
 
         const candidateElements = new Set();
 
-        traverseWithShadowRoots(document.body, (textNode) => {
-            const parent = textNode.parentElement;
-            if (!parent) return;
-            if (parent.closest && parent.closest('#wme-aus-container')) return;
-            if (parent.classList && parent.classList.contains('wme-aus-extra-unit')) return;
-            const tag = parent.tagName;
-            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'SCRIPT' || tag === 'STYLE' || tag === 'OPTION') return;
+        traverseWithShadowRoots(document.body, (node) => {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+                if (node.id === 'wme-aus-container') return;
+                if (node.dataset && node.dataset.wmeAusVal) {
+                    candidateElements.add(node);
+                }
+                return;
+            }
 
-            const txt = textNode.nodeValue ? textNode.nodeValue.trim() : '';
-            if (!txt) return;
+            if (node.nodeType === Node.TEXT_NODE) {
+                const parent = node.parentElement;
+                if (!parent) return;
+                if (parent.closest && parent.closest('#wme-aus-container')) return;
+                if (parent.classList && parent.classList.contains('wme-aus-extra-unit')) return;
+                const tag = parent.tagName;
+                if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'SCRIPT' || tag === 'STYLE' || tag === 'OPTION') return;
 
-            if (/^\d[\d,.]*\s*(ft|feet|m|meters?|metres?)\b/i.test(txt)) {
-                candidateElements.add(parent);
+                const txt = node.nodeValue ? node.nodeValue.trim() : '';
+                if (!txt) return;
+
+                if (/^\d[\d,.]*\s*(ft|feet|m|meters?|metres?)\b/i.test(txt)) {
+                    candidateElements.add(parent);
+                }
             }
         });
 
@@ -574,7 +587,10 @@
             const nonBadgeChildren = Array.from(el.children).filter(
                 c => !c.classList.contains('wme-aus-extra-unit')
             );
-            if (nonBadgeChildren.length > 0) return;
+            if (nonBadgeChildren.length > 0) {
+                removeBadgeFromElement(el);
+                return;
+            }
 
             let rawText = '';
             el.childNodes.forEach(child => {
@@ -587,16 +603,17 @@
 
             const match = rawText.trim().match(/^(\d[\d,]*\.?\d*)\s*(ft|feet|m|meters?|metres?)\b/i);
             if (!match) {
-                const existing = el.querySelector('.wme-aus-extra-unit');
-                if (existing) existing.remove();
-                delete el.dataset.wmeAusVal;
+                removeBadgeFromElement(el);
                 return;
             }
 
             const numericVal = parseFloat(match[1].replace(/,/g, ''));
             const unitToken = match[2].toLowerCase();
 
-            if (isNaN(numericVal) || numericVal <= 0) return;
+            if (isNaN(numericVal) || numericVal <= 0) {
+                removeBadgeFromElement(el);
+                return;
+            }
 
             const isFeet = unitToken === 'ft' || unitToken === 'feet';
             const stateKey = `${isFeet ? 'ft' : 'm'}:${numericVal}`;
