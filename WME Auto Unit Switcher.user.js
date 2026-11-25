@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.4.beta-2
+// @version      1.0.4.beta-3
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -374,8 +374,20 @@
             return;
         }
 
-        const matches = Array.from(cachedCountryNames.entries())
-            .filter(([, name]) => isValidCountryName(name) && name.toLowerCase().includes(query))
+        const allValidEntries = Array.from(cachedCountryNames.entries())
+            .filter(([, name]) => isValidCountryName(name));
+
+        // If the user selected a full country name from the dropdown, hide the list
+        const isExactCountrySelected = allValidEntries.some(
+            ([, name]) => name.toLowerCase() === query
+        );
+        if (isExactCountrySelected) {
+            datalistEl.innerHTML = '';
+            return;
+        }
+
+        const matches = allValidEntries
+            .filter(([, name]) => name.toLowerCase().includes(query))
             .sort((a, b) => {
                 const aStarts = a[1].toLowerCase().startsWith(query) ? 0 : 1;
                 const bStarts = b[1].toLowerCase().startsWith(query) ? 0 : 1;
