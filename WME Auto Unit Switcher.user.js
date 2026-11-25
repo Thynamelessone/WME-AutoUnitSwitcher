@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.4.beta-1
+// @version      1.0.4.beta-2
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -1146,8 +1146,8 @@
             const rule = getRuleForCountry(id);
             const currentUnit = rule.unit;
             const isMulti = Boolean(rule.multiUnit);
-            const hasExplicitRule = countryRules.has(id);
             const isDefaultCountry = Object.prototype.hasOwnProperty.call(DEFAULT_COUNTRY_RULES, id);
+            const isCustomized = customRuleIds.has(id);
             const multiToggleLabel = currentUnit === 'imperial' ? '+yd/m' : '+yd/ft';
             const multiToggleTitle = currentUnit === 'imperial'
                 ? 'Show Yards & Meters next to Feet'
@@ -1173,7 +1173,7 @@
                             <span>${multiToggleLabel}</span>
                         </label>
                     ` : ''}
-                    ${hasExplicitRule && !isDefaultCountry ? `<button type="button" class="wme-aus-remove-btn" title="Remove custom rule">✕</button>` : ''}
+                    ${isCustomized ? `<button type="button" class="wme-aus-remove-btn" title="${isDefaultCountry ? 'Restore default rule' : 'Remove custom rule'}">✕</button>` : ''}
                 </span>
             `;
 
@@ -1216,7 +1216,11 @@
             const removeBtn = row.querySelector('.wme-aus-remove-btn');
             if (removeBtn) {
                 removeBtn.addEventListener('click', () => {
-                    countryRules.delete(id);
+                    if (isDefaultCountry) {
+                        countryRules.set(id, { ...DEFAULT_COUNTRY_RULES[id] });
+                    } else {
+                        countryRules.delete(id);
+                    }
                     customRuleIds.delete(id);
                     saveSettings();
                     refreshCountryListUI(root);
