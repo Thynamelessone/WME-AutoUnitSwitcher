@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.3.beta-2
+// @version      1.0.4.beta-1
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -48,68 +48,14 @@
         236: { unit: 'imperial', multiUnit: false }  // U.S. Virgin Islands
     };
 
-    // Complete Waze Country ID -> Name lookup table (supports both ID & name search)
-    const WAZE_COUNTRY_NAMES = {
-        1: "Afghanistan", 2: "Albania", 3: "Algeria", 4: "American Samoa", 5: "Andorra",
-        6: "Angola", 7: "Anguilla", 8: "Antarctica", 9: "Antigua and Barbuda", 10: "Argentina",
-        11: "Armenia", 12: "Aruba", 13: "Australia", 14: "Austria", 15: "Azerbaijan",
-        16: "Bahamas", 17: "Bahrain", 18: "Bangladesh", 19: "Barbados", 20: "Belarus",
-        21: "Belgium", 22: "Belize", 23: "Benin", 24: "Bermuda", 25: "Bhutan",
-        26: "Bolivia", 27: "Bosnia and Herzegovina", 28: "Botswana", 29: "Bouvet Island", 30: "Brazil",
-        31: "British Indian Ocean Territory", 32: "Brunei", 33: "Bulgaria", 34: "Burkina Faso", 35: "Burundi",
-        36: "Cambodia", 37: "Cameroon", 38: "Canada", 39: "Cape Verde", 40: "Cayman Islands",
-        41: "Central African Republic", 42: "Chad", 43: "Chile", 44: "China", 45: "Christmas Island",
-        46: "Cocos (Keeling) Islands", 47: "Colombia", 48: "Comoros", 49: "Congo", 50: "Cook Islands",
-        51: "Costa Rica", 52: "Croatia", 53: "Cuba", 54: "Cyprus", 55: "Cuba",
-        56: "Czech Republic", 57: "Denmark", 58: "Djibouti", 59: "Dominica", 60: "Dominican Republic",
-        61: "Ecuador", 62: "Egypt", 63: "El Salvador", 64: "Equatorial Guinea", 65: "Eritrea",
-        66: "Estonia", 67: "Ethiopia", 68: "Falkland Islands", 69: "Faroe Islands", 70: "Fiji",
-        71: "Finland", 72: "France", 73: "France", 74: "French Guiana", 75: "French Polynesia",
-        76: "French Southern Territories", 77: "Gabon", 78: "Gambia", 79: "Georgia", 80: "Germany",
-        81: "Ghana", 82: "Gibraltar", 83: "Greece", 84: "Greenland", 85: "Grenada",
-        86: "Guadeloupe", 87: "Guam", 88: "Guam", 89: "Guatemala", 90: "Guernsey",
-        91: "Guinea", 92: "Guinea-Bissau", 93: "Guyana", 94: "Haiti", 95: "Heard Island and McDonald Islands",
-        96: "Honduras", 97: "Hong Kong", 98: "Hungary", 99: "Iceland", 100: "India",
-        101: "Indonesia", 102: "Iran", 103: "Iraq", 104: "Ireland", 105: "Isle of Man",
-        106: "Israel", 107: "Italy", 108: "Ivory Coast", 109: "Jamaica", 110: "Japan",
-        111: "Jersey", 112: "Jordan", 113: "Kazakhstan", 114: "Kenya", 115: "Kiribati",
-        116: "Kuwait", 117: "Kyrgyzstan", 118: "Laos", 119: "Latvia", 120: "Lebanon",
-        121: "Lesotho", 122: "Liberia", 123: "Libya", 124: "Liberia", 125: "Liechtenstein",
-        126: "Lithuania", 127: "Luxembourg", 128: "Macau", 129: "North Macedonia", 130: "Madagascar",
-        131: "Malawi", 132: "Malaysia", 133: "Maldives", 134: "Mali", 135: "Malta",
-        136: "Marshall Islands", 137: "Martinique", 138: "Mauritania", 139: "Mauritius", 140: "Mayotte",
-        141: "Mexico", 142: "Micronesia", 143: "Moldova", 144: "Monaco", 145: "Mongolia",
-        146: "Montenegro", 147: "Montserrat", 148: "Morocco", 149: "Mozambique", 150: "Myanmar",
-        151: "Namibia", 152: "Nauru", 153: "Nepal", 154: "Netherlands", 155: "Netherlands Antilles",
-        156: "New Caledonia", 157: "New Zealand", 158: "Nicaragua", 159: "Niger", 160: "Nigeria",
-        161: "Niue", 162: "Norfolk Island", 163: "North Korea", 164: "Northern Mariana Islands", 165: "Norway",
-        166: "Oman", 167: "Pakistan", 168: "Palau", 169: "Palestine", 170: "Panama",
-        171: "Papua New Guinea", 172: "Paraguay", 173: "Peru", 174: "Philippines", 175: "Pitcairn Islands",
-        176: "Poland", 177: "Portugal", 178: "Puerto Rico", 179: "Qatar", 180: "Reunion",
-        181: "Romania", 182: "Puerto Rico", 183: "Russia", 184: "Rwanda", 185: "Saint Barthelemy",
-        186: "Saint Helena", 187: "Saint Kitts and Nevis", 188: "Saint Lucia", 189: "Saint Martin", 190: "Saint Pierre and Miquelon",
-        191: "Saint Vincent and the Grenadines", 192: "Samoa", 193: "San Marino", 194: "Sao Tome and Principe", 195: "Saudi Arabia",
-        196: "Senegal", 197: "Serbia", 198: "Seychelles", 199: "Sierra Leone", 200: "Singapore",
-        201: "Slovakia", 202: "Slovenia", 203: "Solomon Islands", 204: "Somalia", 205: "South Africa",
-        206: "South Georgia", 207: "South Korea", 208: "Spain", 209: "Sri Lanka", 210: "Sudan",
-        211: "Suriname", 212: "Svalbard and Jan Mayen", 213: "Eswatini", 214: "Sweden", 215: "Switzerland",
-        216: "Syria", 217: "Taiwan", 218: "Tajikistan", 219: "Tanzania", 220: "Thailand",
-        221: "Timor-Leste", 222: "Togo", 223: "Tokelau", 224: "Tonga", 225: "Trinidad and Tobago",
-        226: "Tunisia", 227: "Turkey", 228: "Turkmenistan", 229: "Turks and Caicos Islands", 230: "Tuvalu",
-        231: "Uganda", 232: "Ukraine", 233: "United Arab Emirates", 234: "United Kingdom", 235: "United States",
-        236: "U.S. Virgin Islands", 237: "Uruguay", 238: "Uzbekistan", 239: "Vanuatu", 240: "Vatican City",
-        241: "Venezuela", 242: "Vietnam", 243: "Wallis and Futuna", 244: "Western Sahara", 245: "Yemen",
-        246: "Zambia", 247: "Zimbabwe", 248: "Kosovo", 249: "South Sudan", 250: "Curacao",
-        251: "Sint Maarten", 252: "Bonaire"
-    };
-
     let sdk = null;
     // Map<number, { unit: 'imperial' | 'metric', multiUnit: boolean }>
     let countryRules = new Map();
     // Set<number> of country IDs explicitly added or modified by the user
     let customRuleIds = new Set();
-    // Map<number, string>
+    // Map<number, string> populated from WME SDK & cached in localStorage
     let cachedCountryNames = new Map();
+    let sdkCatalogScanned = false;
     let globalMultiUnit = true;
     let lastCountryId = null;
     let activeCountryId = null;
@@ -133,10 +79,19 @@
         return typeof name === 'string' && name.trim().length > 0 && !/^Country ID:\s*\d+$/i.test(name.trim());
     }
 
-    function setCachedCountryName(id, name) {
+    function setCachedCountryName(id, name, fromSdk = false) {
         if (typeof id !== 'number' || isNaN(id)) return false;
         if (!isValidCountryName(name)) return false;
         const cleanName = name.trim();
+
+        if (fromSdk) {
+            for (const [existingId, existingName] of cachedCountryNames.entries()) {
+                if (existingId !== id && existingName.toLowerCase() === cleanName.toLowerCase()) {
+                    cachedCountryNames.delete(existingId);
+                }
+            }
+        }
+
         if (cachedCountryNames.get(id) !== cleanName) {
             cachedCountryNames.set(id, cleanName);
             return true;
@@ -156,9 +111,7 @@
             console.error(`${getDisplayName()}: Error checking reset flag.`, e);
         }
 
-        cachedCountryNames = new Map(
-            Object.entries(WAZE_COUNTRY_NAMES).map(([id, name]) => [parseInt(id, 10), name])
-        );
+        cachedCountryNames = new Map();
 
         if (shouldResetDefaults) {
             countryRules = new Map(
@@ -285,7 +238,7 @@
         try {
             const namesObj = {};
             cachedCountryNames.forEach((name, id) => {
-                if (isValidCountryName(name) && WAZE_COUNTRY_NAMES[id] !== name) {
+                if (isValidCountryName(name)) {
                     namesObj[id] = name;
                 }
             });
@@ -295,13 +248,13 @@
         }
     }
 
-    function cacheLoadedCountryNames(extraIdsToLookup = []) {
-        if (!sdk) return false;
+    function cacheLoadedCountryNames(scanAllSdkIds = false) {
+        if (!sdk || !sdk.DataModel || !sdk.DataModel.Countries) return false;
         let updated = false;
 
         try {
             const topCountry = sdk.DataModel.Countries.getTopCountry();
-            if (topCountry && setCachedCountryName(topCountry.id, topCountry.name)) {
+            if (topCountry && setCachedCountryName(topCountry.id, topCountry.name, true)) {
                 updated = true;
             }
         } catch (_) {}
@@ -309,23 +262,30 @@
         try {
             const loadedCountries = sdk.DataModel.Countries.getAll() || [];
             loadedCountries.forEach(c => {
-                if (c && setCachedCountryName(c.id, c.name)) {
+                if (c && setCachedCountryName(c.id, c.name, true)) {
                     updated = true;
                 }
             });
         } catch (_) {}
 
-        const idsToCheck = new Set([...countryRules.keys(), ...extraIdsToLookup]);
-        idsToCheck.forEach(id => {
-            if (sdk.DataModel.Countries.getById) {
+        const idsToCheck = new Set([...countryRules.keys(), ...customRuleIds]);
+        if (scanAllSdkIds && !sdkCatalogScanned && sdk.DataModel.Countries.getById) {
+            for (let id = 1; id <= 400; id++) {
+                idsToCheck.add(id);
+            }
+            sdkCatalogScanned = true;
+        }
+
+        if (sdk.DataModel.Countries.getById) {
+            idsToCheck.forEach(id => {
                 try {
                     const c = sdk.DataModel.Countries.getById({ countryId: id });
-                    if (c && setCachedCountryName(c.id, c.name)) {
+                    if (c && setCachedCountryName(c.id, c.name, true)) {
                         updated = true;
                     }
                 } catch (_) {}
-            }
-        });
+            });
+        }
 
         if (updated) {
             saveCountryNamesCache();
@@ -339,7 +299,7 @@
             try {
                 const top = sdk.DataModel.Countries.getTopCountry();
                 if (top && top.id === countryId && isValidCountryName(top.name)) {
-                    setCachedCountryName(countryId, top.name);
+                    setCachedCountryName(countryId, top.name, true);
                     return top.name.trim();
                 }
             } catch (_) {}
@@ -348,9 +308,18 @@
                 if (sdk.DataModel.Countries.getById) {
                     const c = sdk.DataModel.Countries.getById({ countryId });
                     if (c && isValidCountryName(c.name)) {
-                        setCachedCountryName(countryId, c.name);
+                        setCachedCountryName(countryId, c.name, true);
                         return c.name.trim();
                     }
+                }
+            } catch (_) {}
+
+            try {
+                const all = sdk.DataModel.Countries.getAll() || [];
+                const found = all.find(c => c && c.id === countryId);
+                if (found && isValidCountryName(found.name)) {
+                    setCachedCountryName(countryId, found.name, true);
+                    return found.name.trim();
                 }
             } catch (_) {}
         }
@@ -358,54 +327,35 @@
         if (cachedCountryNames.has(countryId)) {
             return cachedCountryNames.get(countryId);
         }
-        return WAZE_COUNTRY_NAMES[countryId] || `Country ID: ${countryId}`;
+        return `Country ID: ${countryId}`;
     }
 
+    // Search strictly by country name against SDK-discovered IDs and names
     function resolveCountryInput(rawInput) {
+        cacheLoadedCountryNames(true);
         const query = (rawInput || '').trim();
-        if (!query) return null;
+        if (!query || /^\d+$/.test(query)) return null;
 
-        // 1. Direct numeric ID: e.g. "73"
-        if (/^\d+$/.test(query)) {
-            const id = parseInt(query, 10);
-            if (id > 0) {
-                cacheLoadedCountryNames([id]);
-                return { id, name: getCountryName(id) };
-            }
-            return null;
-        }
-
-        // 2. Datalist formatted string: e.g. "France (73)"
-        const trailingIdMatch = query.match(/\((\d+)\)\s*$/);
-        if (trailingIdMatch) {
-            const id = parseInt(trailingIdMatch[1], 10);
-            if (id > 0) {
-                cacheLoadedCountryNames([id]);
-                return { id, name: getCountryName(id) };
-            }
-        }
-
-        // 3. Case-insensitive exact or partial name match against cached + built-in countries
         const lowerQuery = query.toLowerCase();
         const allEntries = Array.from(cachedCountryNames.entries());
 
         const exactMatches = allEntries
             .filter(([, name]) => name.toLowerCase() === lowerQuery)
-            .sort((a, b) => b[0] - a[0]);
+            .sort((a, b) => a[0] - b[0]);
         if (exactMatches.length > 0) {
             return { id: exactMatches[0][0], name: exactMatches[0][1] };
         }
 
         const prefixMatches = allEntries
             .filter(([, name]) => name.toLowerCase().startsWith(lowerQuery))
-            .sort((a, b) => a[1].length - b[1].length || b[0] - a[0]);
+            .sort((a, b) => a[1].length - b[1].length || a[0] - b[0]);
         if (prefixMatches.length > 0) {
             return { id: prefixMatches[0][0], name: prefixMatches[0][1] };
         }
 
         const partialMatches = allEntries
             .filter(([, name]) => name.toLowerCase().includes(lowerQuery))
-            .sort((a, b) => a[1].length - b[1].length || b[0] - a[0]);
+            .sort((a, b) => a[1].length - b[1].length || a[0] - b[0]);
         if (partialMatches.length > 0) {
             return { id: partialMatches[0][0], name: partialMatches[0][1] };
         }
@@ -415,19 +365,17 @@
 
     function updateCountryDatalist(datalistEl, rawQuery) {
         if (!datalistEl) return;
+        cacheLoadedCountryNames(true);
         const query = (rawQuery || '').trim().toLowerCase();
 
-        // Keep datalist empty until the user actually starts typing
+        // Keep datalist empty until the user actually starts typing a name
         if (!query) {
             datalistEl.innerHTML = '';
             return;
         }
 
         const matches = Array.from(cachedCountryNames.entries())
-            .filter(([id, name]) => {
-                if (!isValidCountryName(name)) return false;
-                return name.toLowerCase().includes(query) || String(id).startsWith(query);
-            })
+            .filter(([, name]) => isValidCountryName(name) && name.toLowerCase().includes(query))
             .sort((a, b) => {
                 const aStarts = a[1].toLowerCase().startsWith(query) ? 0 : 1;
                 const bStarts = b[1].toLowerCase().startsWith(query) ? 0 : 1;
@@ -435,7 +383,7 @@
             });
 
         datalistEl.innerHTML = matches
-            .map(([id, name]) => `<option value="${name} (${id})"></option>`)
+            .map(([, name]) => `<option value="${name}"></option>`)
             .join('');
     }
 
@@ -941,7 +889,7 @@
         const countryId = topCountry.id;
         activeCountryId = countryId;
 
-        setCachedCountryName(countryId, topCountry.name);
+        setCachedCountryName(countryId, topCountry.name, true);
 
         if (!isMultiUnitActiveForCurrentCountry()) {
             clearMultiUnitNodes();
@@ -1006,7 +954,7 @@
             </label>
 
             <div class="wme-aus-input-row">
-                <input type="text" id="wme-aus-add-id" list="wme-aus-country-datalist" placeholder="Country name or ID" />
+                <input type="text" id="wme-aus-add-id" list="wme-aus-country-datalist" placeholder="Search country name" />
                 <datalist id="wme-aus-country-datalist"></datalist>
                 <select id="wme-aus-add-unit" title="Unit system for this country">
                     <option value="imperial">Imperial</option>
@@ -1055,7 +1003,7 @@
             const resolved = resolveCountryInput(addInput.value);
             const selectedUnit = addUnitSelect.value === 'imperial' ? 'imperial' : 'metric';
             if (resolved && resolved.id > 0) {
-                setCachedCountryName(resolved.id, resolved.name);
+                setCachedCountryName(resolved.id, resolved.name, true);
                 const existing = countryRules.get(resolved.id);
                 countryRules.set(resolved.id, {
                     unit: selectedUnit,
@@ -1174,7 +1122,7 @@
         const loadedCountries = sdk.DataModel.Countries.getAll() || [];
         loadedCountries.forEach(c => {
             if (c && typeof c.id === 'number') {
-                setCachedCountryName(c.id, c.name);
+                setCachedCountryName(c.id, c.name, true);
             }
         });
 
@@ -1231,7 +1179,7 @@
 
             const select = row.querySelector('.wme-aus-unit-select');
             select.addEventListener('change', (e) => {
-                setCachedCountryName(id, name);
+                setCachedCountryName(id, name, true);
                 const newUnit = e.target.value === 'imperial' ? 'imperial' : 'metric';
                 const prev = getRuleForCountry(id);
                 countryRules.set(id, { unit: newUnit, multiUnit: prev.multiUnit });
@@ -1245,7 +1193,7 @@
             const multiChk = row.querySelector('.wme-aus-multi-toggle input');
             if (multiChk) {
                 multiChk.addEventListener('change', (e) => {
-                    setCachedCountryName(id, name);
+                    setCachedCountryName(id, name, true);
                     const prev = getRuleForCountry(id);
                     countryRules.set(id, { unit: prev.unit, multiUnit: e.target.checked });
                     customRuleIds.add(id);
