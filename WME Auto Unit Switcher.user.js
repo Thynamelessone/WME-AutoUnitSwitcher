@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.5.beta-2
+// @version      1.0.8-beta.1
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -9,8 +9,8 @@
 // @exclude      https://www.waze.com/*user/*editor/*
 // @grant        none
 // @require      https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
-// @downloadURL  https://github.com/Thynamelessone/WME-AutoUnitSwitcher/raw/refs/heads/beta/WME%20Auto%20Unit%20Switcher.user.js
-// @updateURL    https://github.com/Thynamelessone/WME-AutoUnitSwitcher/raw/refs/heads/beta/WME%20Auto%20Unit%20Switcher.user.js
+// @downloadURL  https://update.greasyfork.org/scripts/607137/WME%20Auto%20Unit%20Switcher.user.js
+// @updateURL    https://update.greasyfork.org/scripts/607137/WME%20Auto%20Unit%20Switcher.user.js
 // ==/UserScript==
 
 /* global getWmeSdk, WazeWrap, GM_info */
@@ -20,8 +20,8 @@
 
     const SCRIPT_ID = "WME AUS";
     const SCRIPT_NAME = "WME Auto Unit Switcher";
-    const updateMessage = "";
-    const USERSCRIPT_URL = "Fixed support for WME MapCommentGeometry script";
+    const updateMessage = "Fixed bug with extra units showing for WME Edit Count Monitor, Time Display";
+    const USERSCRIPT_URL = "https://greasyfork.org/en/scripts/607137-wme-auto-unit-switcher";
 
     const STORAGE_KEY = 'wme_auto_unit_switcher_country_rules_v2';
     const CUSTOM_RULE_IDS_KEY = 'wme_auto_unit_switcher_custom_rule_ids';
@@ -629,7 +629,15 @@
             }
         });
 
-        const match = rawText.trim().match(/^(\d[\d,]*\.?\d*)\s*(ft|feet|m|meters?|metres?)\b/i);
+        const trimmedText = rawText.trim();
+
+        // Skip time durations such as "1m 10s", "2h 5m", or "30s"
+        if (/^(?:\d+\s*h(?:\s*\d+\s*m(?:\s*\d+\s*s)?)?|\d+\s*m(?:\s*\d+\s*s)?|\d+\s*s)\b/i.test(trimmedText)) {
+            removeBadgeFromElement(el);
+            return;
+        }
+
+        const match = trimmedText.match(/^(\d[\d,]*\.?\d*)\s*(ft|feet|m|meters?|metres?)\b/i);
         if (!match) {
             removeBadgeFromElement(el);
             return;
