@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.8-beta.1
+// @version      1.0.8-beta.2
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -20,7 +20,7 @@
 
     const SCRIPT_ID = "WME AUS";
     const SCRIPT_NAME = "WME Auto Unit Switcher";
-    const updateMessage = "Fixed bug with extra units showing for WME Edit Count Monitor, Time Display";
+    const updateMessage = "Fixed bug with extra units showing for Time Display using WME Edit Count Monitor Script";
     const USERSCRIPT_URL = "https://greasyfork.org/en/scripts/607137-wme-auto-unit-switcher";
 
     const STORAGE_KEY = 'wme_auto_unit_switcher_country_rules_v2';
