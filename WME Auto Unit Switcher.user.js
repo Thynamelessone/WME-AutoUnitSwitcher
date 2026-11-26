@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.7
+// @version      1.0.8
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -20,7 +20,7 @@
 
     const SCRIPT_ID = "WME AUS";
     const SCRIPT_NAME = "WME Auto Unit Switcher";
-    const updateMessage = "Fixed support for WME MapCommentGeometry script";
+    const updateMessage = "Fixed bug with extra units showing for Time Display using WME Edit Count Monitor Script";
     const USERSCRIPT_URL = "https://greasyfork.org/en/scripts/607137-wme-auto-unit-switcher";
 
     const STORAGE_KEY = 'wme_auto_unit_switcher_country_rules_v2';
@@ -629,7 +629,15 @@
             }
         });
 
-        const match = rawText.trim().match(/^(\d[\d,]*\.?\d*)\s*(ft|feet|m|meters?|metres?)\b/i);
+        const trimmedText = rawText.trim();
+
+        // Skip time durations such as "1m 10s", "2h 5m", or "30s"
+        if (/^(?:\d+\s*h(?:\s*\d+\s*m(?:\s*\d+\s*s)?)?|\d+\s*m(?:\s*\d+\s*s)?|\d+\s*s)\b/i.test(trimmedText)) {
+            removeBadgeFromElement(el);
+            return;
+        }
+
+        const match = trimmedText.match(/^(\d[\d,]*\.?\d*)\s*(ft|feet|m|meters?|metres?)\b/i);
         if (!match) {
             removeBadgeFromElement(el);
             return;
