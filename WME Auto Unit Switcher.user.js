@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.8-beta.2
+// @version      1.0.9-beta.1
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -20,16 +20,21 @@
 
     const SCRIPT_ID = "WME AUS";
     const SCRIPT_NAME = "WME Auto Unit Switcher";
-    const updateMessage = "Fixed bug with extra units showing for Time Display using WME Edit Count Monitor Script";
+    const updateMessage = "";
     const USERSCRIPT_URL = "https://greasyfork.org/en/scripts/607137-wme-auto-unit-switcher";
 
     const STORAGE_KEY = 'wme_auto_unit_switcher_country_rules_v2';
     const CUSTOM_RULE_IDS_KEY = 'wme_auto_unit_switcher_custom_rule_ids';
     const COUNTRY_NAMES_STORAGE_KEY = 'wme_auto_unit_switcher_country_names';
     const GLOBAL_MULTI_UNIT_KEY = 'wme_auto_unit_switcher_global_multi_unit';
-    const RESET_1_0_2_KEY = 'wme_auto_unit_switcher_reset_1_0_2';
     const LEGACY_V1_STORAGE_KEY = 'wme_auto_unit_switcher_country_rules';
     const LEGACY_UK_HYBRID_KEY = 'wme_auto_unit_switcher_uk_hybrid';
+
+    const TARGET_ELEMENT_SELECTORS = [
+        'wz-subhead3',
+        '.selected-value',
+        '.length-attribute .value'
+    ].join(',');
 
     // 64x64 inline SVG ruler icon for WME Studio's script bar
     const SCRIPT_ICON_DATA_URL = 'data:image/svg+xml;utf8,' + encodeURIComponent(
@@ -67,7 +72,7 @@
     }
 
     function getScriptVersion() {
-        return (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.0.3.beta-1';
+        return (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '1.0.3.beta-2';
     }
 
     function getScriptId() {
@@ -100,28 +105,7 @@
     }
 
     function loadSettings() {
-        let shouldResetDefaults = false;
-
-        try {
-            if (localStorage.getItem(RESET_1_0_2_KEY) !== 'true') {
-                shouldResetDefaults = true;
-                localStorage.setItem(RESET_1_0_2_KEY, 'true');
-            }
-        } catch (e) {
-            console.error(`${getDisplayName()}: Error checking reset flag.`, e);
-        }
-
         cachedCountryNames = new Map();
-
-        if (shouldResetDefaults) {
-            countryRules = new Map(
-                Object.entries(DEFAULT_COUNTRY_RULES).map(([id, cfg]) => [parseInt(id, 10), { ...cfg }])
-            );
-            customRuleIds = new Set();
-            globalMultiUnit = true;
-            saveSettings();
-            return;
-        }
 
         try {
             const savedNames = localStorage.getItem(COUNTRY_NAMES_STORAGE_KEY);
@@ -330,7 +314,6 @@
         return `Country ID: ${countryId}`;
     }
 
-    // Search strictly by country name against SDK-discovered IDs and names
     function resolveCountryInput(rawInput) {
         cacheLoadedCountryNames(true);
         const query = (rawInput || '').trim();
@@ -368,7 +351,6 @@
         cacheLoadedCountryNames(true);
         const query = (rawQuery || '').trim().toLowerCase();
 
-        // Keep datalist empty until the user actually starts typing a name
         if (!query) {
             datalistEl.innerHTML = '';
             return;
@@ -377,7 +359,6 @@
         const allValidEntries = Array.from(cachedCountryNames.entries())
             .filter(([, name]) => isValidCountryName(name));
 
-        // If the user selected a full country name from the dropdown, hide the list
         const isExactCountrySelected = allValidEntries.some(
             ([, name]) => name.toLowerCase() === query
         );
@@ -473,8 +454,6 @@
         console.log(`${displayName}: Initialized with WME SDK.`);
     }
 
-    // --- Multi-Unit Conversion & Measure Tool (Light + Shadow DOM) ---
-
     function formatNumber(val) {
         return val >= 100
             ? Math.round(val).toLocaleString()
@@ -493,6 +472,47 @@
         return `(${formatNumber(yards)} yd / ${formatNumber(feet)} ft)`;
     }
 
+    function findMatchingTargetElement(node) {
+        if (!node) return null;
+        const el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+        if (!el || el.nodeType !== Node.ELEMENT_NODE) return null;
+        if (el.id === 'wme-aus-container' || (el.closest && el.closest('#wme-aus-container'))) return null;
+        if (el.classList && el.classList.contains('wme-aus-extra-unit')) return el.parentElement || null;
+
+        if (typeof el.matches === 'function' && el.matches(TARGET_ELEMENT_SELECTORS)) {
+            return el;
+        }
+        if (typeof el.closest === 'function') {
+            const matchedAncestor = el.closest(TARGET_ELEMENT_SELECTORS);
+            if (matchedAncestor) return matchedAncestor;
+        }
+        return null;
+    }
+
+    function collectTargetElementsInSubtree(rootNode, resultSet) {
+        if (!rootNode) return;
+        if (rootNode.nodeType === Node.ELEMENT_NODE && rootNode.id === 'wme-aus-container') return;
+
+        if (typeof rootNode.querySelectorAll === 'function') {
+            rootNode.querySelectorAll(TARGET_ELEMENT_SELECTORS).forEach((el) => {
+                if (!el.closest || !el.closest('#wme-aus-container')) {
+                    resultSet.add(el);
+                }
+            });
+            rootNode.querySelectorAll('*').forEach((el) => {
+                if (el.shadowRoot) {
+                    observeRootForMultiUnit(el.shadowRoot);
+                    collectTargetElementsInSubtree(el.shadowRoot, resultSet);
+                }
+            });
+        }
+
+        if (rootNode.nodeType === Node.ELEMENT_NODE && rootNode.shadowRoot) {
+            observeRootForMultiUnit(rootNode.shadowRoot);
+            collectTargetElementsInSubtree(rootNode.shadowRoot, resultSet);
+        }
+    }
+
     function observeRootForMultiUnit(rootNode) {
         if (!rootNode || observedShadowRoots.has(rootNode)) return;
         observedShadowRoots.add(rootNode);
@@ -503,31 +523,30 @@
             const elementsToCheck = new Set();
 
             for (const mutation of mutations) {
-                if (mutation.type === 'characterData') {
-                    const parent = mutation.target.parentElement;
-                    if (parent) {
-                        const host = parent.classList && parent.classList.contains('wme-aus-extra-unit')
-                            ? parent.parentElement
-                            : parent;
-                        if (host) elementsToCheck.add(host);
-                    }
-                } else if (mutation.type === 'childList') {
-                    const targetEl = mutation.target.nodeType === Node.ELEMENT_NODE
-                        ? mutation.target
-                        : mutation.target.parentElement;
-                    if (targetEl) elementsToCheck.add(targetEl);
+                const matchedFromTarget = findMatchingTargetElement(mutation.target);
+                if (matchedFromTarget) {
+                    elementsToCheck.add(matchedFromTarget);
+                }
 
+                if (mutation.type === 'childList') {
+                    if (mutation.target && typeof mutation.target.querySelectorAll === 'function') {
+                        mutation.target.querySelectorAll(TARGET_ELEMENT_SELECTORS).forEach((el) => {
+                            if (!el.closest || !el.closest('#wme-aus-container')) {
+                                elementsToCheck.add(el);
+                            }
+                        });
+                    }
                     mutation.addedNodes.forEach((node) => {
-                        if (node.nodeType === Node.TEXT_NODE && node.parentElement) {
-                            elementsToCheck.add(node.parentElement);
-                        } else if (node.nodeType === Node.ELEMENT_NODE) {
-                            collectCandidateElementsInSubtree(node, elementsToCheck);
+                        const matchedAdded = findMatchingTargetElement(node);
+                        if (matchedAdded) elementsToCheck.add(matchedAdded);
+                        if (node.nodeType === Node.ELEMENT_NODE) {
+                            collectTargetElementsInSubtree(node, elementsToCheck);
                         }
                     });
                 }
             }
 
-            elementsToCheck.forEach(processMultiUnitElement);
+            elementsToCheck.forEach(processTargetElement);
         });
 
         observer.observe(rootNode, {
@@ -541,47 +560,6 @@
         if (multiUnitObserverInitialized) return;
         multiUnitObserverInitialized = true;
         observeRootForMultiUnit(document.body);
-    }
-
-    function collectCandidateElementsInSubtree(rootNode, resultSet) {
-        if (!rootNode || rootNode.id === 'wme-aus-container') return;
-
-        if (rootNode.nodeType === Node.ELEMENT_NODE) {
-            if (rootNode.dataset && rootNode.dataset.wmeAusVal) {
-                resultSet.add(rootNode);
-            }
-            if (rootNode.shadowRoot) {
-                observeRootForMultiUnit(rootNode.shadowRoot);
-                collectCandidateElementsInSubtree(rootNode.shadowRoot, resultSet);
-            }
-        }
-
-        const walker = document.createTreeWalker(rootNode, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, null);
-        let current;
-        while ((current = walker.nextNode())) {
-            if (current.nodeType === Node.ELEMENT_NODE) {
-                if (current.id === 'wme-aus-container') continue;
-                if (current.dataset && current.dataset.wmeAusVal) {
-                    resultSet.add(current);
-                }
-                if (current.shadowRoot) {
-                    observeRootForMultiUnit(current.shadowRoot);
-                    collectCandidateElementsInSubtree(current.shadowRoot, resultSet);
-                }
-            } else if (current.nodeType === Node.TEXT_NODE) {
-                const parent = current.parentElement;
-                if (!parent) continue;
-                if (parent.closest && parent.closest('#wme-aus-container')) continue;
-                if (parent.classList && parent.classList.contains('wme-aus-extra-unit')) continue;
-                const tag = parent.tagName;
-                if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'SCRIPT' || tag === 'STYLE' || tag === 'OPTION') continue;
-
-                const txt = current.nodeValue ? current.nodeValue.trim() : '';
-                if (txt && /^\d[\d,.]*\s*(ft|feet|m|meters?|metres?)\b/i.test(txt)) {
-                    resultSet.add(parent);
-                }
-            }
-        }
     }
 
     function clearMultiUnitNodes() {
@@ -604,21 +582,9 @@
         delete el.dataset.wmeAusVal;
     }
 
-    function processMultiUnitElement(el) {
+    function processTargetElement(el) {
         if (!el || el.nodeType !== Node.ELEMENT_NODE) return;
         if (el.id === 'wme-aus-container' || (el.closest && el.closest('#wme-aus-container'))) return;
-        if (el.classList && el.classList.contains('wme-aus-extra-unit')) return;
-
-        const tag = el.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'SCRIPT' || tag === 'STYLE' || tag === 'OPTION') return;
-
-        const nonBadgeChildren = Array.from(el.children).filter(
-            c => !c.classList.contains('wme-aus-extra-unit')
-        );
-        if (nonBadgeChildren.length > 0) {
-            removeBadgeFromElement(el);
-            return;
-        }
 
         let rawText = '';
         el.childNodes.forEach(child => {
@@ -630,13 +596,6 @@
         });
 
         const trimmedText = rawText.trim();
-
-        // Skip time durations such as "1m 10s", "2h 5m", or "30s"
-        if (/^(?:\d+\s*h(?:\s*\d+\s*m(?:\s*\d+\s*s)?)?|\d+\s*m(?:\s*\d+\s*s)?|\d+\s*s)\b/i.test(trimmedText)) {
-            removeBadgeFromElement(el);
-            return;
-        }
-
         const match = trimmedText.match(/^(\d[\d,]*\.?\d*)\s*(ft|feet|m|meters?|metres?)\b/i);
         if (!match) {
             removeBadgeFromElement(el);
@@ -674,9 +633,9 @@
             return;
         }
 
-        const candidateElements = new Set();
-        collectCandidateElementsInSubtree(document.body, candidateElements);
-        candidateElements.forEach(processMultiUnitElement);
+        const targetElements = new Set();
+        collectTargetElementsInSubtree(document.body, targetElements);
+        targetElements.forEach(processTargetElement);
     }
 
     // --- WME Studio Theme-Aware CSS (with full fallbacks) ---
