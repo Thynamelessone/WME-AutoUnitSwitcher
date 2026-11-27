@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.9-beta.2
+// @version      1.0.12-beta.1
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -30,8 +30,10 @@
     const LEGACY_V1_STORAGE_KEY = 'wme_auto_unit_switcher_country_rules';
     const LEGACY_UK_HYBRID_KEY = 'wme_auto_unit_switcher_uk_hybrid';
 
+    // Specific target selectors for measure/subhead, geometry dropdowns, and segment lengths
     const TARGET_ELEMENT_SELECTORS = [
         'wz-subhead3',
+        '.selected-value',
         '.length-attribute .value'
     ].join(',');
 
@@ -64,6 +66,7 @@
     let lastCountryId = null;
     let activeCountryId = null;
     let multiUnitObserverInitialized = false;
+    let permalinkGuardTimer = null;
     const observedShadowRoots = new WeakSet();
 
     function getDisplayName() {
@@ -452,6 +455,8 @@
         onMapUpdate();
         console.log(`${displayName}: Initialized with WME SDK.`);
     }
+
+    // --- Targeted Multi-Unit Conversion (wz-subhead3, .selected-value, .length-attribute .value) ---
 
     function formatNumber(val) {
         return val >= 100
@@ -906,6 +911,15 @@
 
     // --- Core Unit Switching Logic (SDK) ---
 
+    function hasSelectedSegments() {
+        try {
+            const sel = sdk && sdk.Editing && sdk.Editing.getSelection ? sdk.Editing.getSelection() : null;
+            return Boolean(sel && Array.isArray(sel.ids) && sel.ids.length > 0);
+        } catch (_) {
+            return false;
+        }
+    }
+
     function onMapUpdate() {
         cacheLoadedCountryNames();
         checkAndSetUnits();
@@ -929,29 +943,40 @@
         }
 
         if (!force && countryId === lastCountryId) return;
-        lastCountryId = countryId;
 
         const rule = getRuleForCountry(countryId);
         const shouldBeImperial = rule.unit === 'imperial';
         const prefs = sdk.Settings.getUserSettings();
         const isCurrentlyImperial = Boolean(prefs && prefs.isImperial);
 
-        if (shouldBeImperial !== isCurrentlyImperial) {
-            setWMEUnits(shouldBeImperial, topCountry.name);
-        } else {
+        if (shouldBeImperial === isCurrentlyImperial) {
+            lastCountryId = countryId;
             updateStatusBanner(topCountry.name, shouldBeImperial);
+            return;
         }
+
+        // If a permalink opened with a segment already selected, let WME finish initial selection mount first
+        if (!force && lastCountryId === null && hasSelectedSegments()) {
+            if (!permalinkGuardTimer) {
+                permalinkGuardTimer = setTimeout(() => {
+                    permalinkGuardTimer = null;
+                    checkAndSetUnits(true);
+                }, 400);
+            }
+            return;
+        }
+
+        lastCountryId = countryId;
+        setWMEUnits(shouldBeImperial, topCountry.name);
     }
 
     function setWMEUnits(useImperial, countryName) {
         try {
-            sdk.Settings.setUserSettings({ isImperial: useImperial });
-
-            const targetId = useImperial ? 'prefs-unit-imperial' : 'prefs-unit-metric';
-            const radioBtn = document.getElementById(targetId);
-            if (radioBtn && !radioBtn.checked) {
-                radioBtn.click();
+            if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                document.activeElement.blur();
             }
+
+            sdk.Settings.setUserSettings({ isImperial: useImperial });
 
             const unitLabel = useImperial ? 'Imperial (ft/mi)' : 'Metric (m/km)';
             console.log(`${getDisplayName()}: Switched to ${unitLabel} for ${countryName}.`);
