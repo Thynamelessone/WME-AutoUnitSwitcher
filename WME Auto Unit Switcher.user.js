@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.9-beta.1
+// @version      1.0.9-beta.2
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -32,7 +32,6 @@
 
     const TARGET_ELEMENT_SELECTORS = [
         'wz-subhead3',
-        '.selected-value',
         '.length-attribute .value'
     ].join(',');
 
