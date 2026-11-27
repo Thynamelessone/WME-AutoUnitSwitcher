@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.12-beta.3
+// @version      1.0.12-beta.4
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -942,16 +942,21 @@
             clearMultiUnitNodes();
         }
 
-        if (!force && countryId === lastCountryId) return;
-
         const rule = getRuleForCountry(countryId);
         const shouldBeImperial = rule.unit === 'imperial';
         const prefs = sdk.Settings.getUserSettings();
         const isCurrentlyImperial = Boolean(prefs && prefs.isImperial);
+        const targetRadioId = shouldBeImperial ? 'prefs-unit-imperial' : 'prefs-unit-metric';
+        const targetRadio = document.getElementById(targetRadioId);
+        const domOutOfSync = Boolean(targetRadio && !targetRadio.checked);
+        const needsSwitch = (shouldBeImperial !== isCurrentlyImperial) || domOutOfSync;
 
-        if (shouldBeImperial === isCurrentlyImperial) {
-            lastCountryId = countryId;
+        if (!needsSwitch) {
             updateStatusBanner(topCountry.name, shouldBeImperial);
+            return;
+        }
+
+        if (!force && countryId === lastCountryId && !domOutOfSync) {
             return;
         }
 
@@ -989,6 +994,12 @@
             }
 
             sdk.Settings.setUserSettings({ isImperial: useImperial });
+
+            const targetId = useImperial ? 'prefs-unit-imperial' : 'prefs-unit-metric';
+            const radioBtn = document.getElementById(targetId);
+            if (radioBtn && !radioBtn.checked) {
+                radioBtn.click();
+            }
 
             if (selectedIds.length > 0 && sdk.Editing && typeof sdk.Editing.setSelection === 'function') {
                 if (reselectTimer) {
