@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.12-beta.2
+// @version      1.0.12-beta.3
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -65,6 +65,8 @@
     let activeCountryId = null;
     let multiUnitObserverInitialized = false;
     let permalinkGuardTimer = null;
+    let reselectTimer = null;
+    let isSwitchingUnits = false;
     const observedShadowRoots = new WeakSet();
 
     function getDisplayName() {
@@ -454,7 +456,7 @@
         console.log(`${displayName}: Initialized with WME SDK.`);
     }
 
-    // --- Targeted Multi-Unit Conversion (wz-subhead3, .selected-value, .length-attribute .value) ---
+    // --- Targeted Multi-Unit Conversion (wz-subhead3, .length-attribute .value) ---
 
     function formatNumber(val) {
         return val >= 100
@@ -926,7 +928,7 @@
     }
 
     function checkAndSetUnits(force = false) {
-        if (!sdk) return;
+        if (!sdk || isSwitchingUnits) return;
 
         const topCountry = sdk.DataModel.Countries.getTopCountry();
         if (!topCountry) return;
@@ -969,6 +971,7 @@
     }
 
     function setWMEUnits(useImperial, countryName) {
+        isSwitchingUnits = true;
         try {
             if (document.activeElement && typeof document.activeElement.blur === 'function') {
                 document.activeElement.blur();
@@ -981,15 +984,22 @@
                 ? [...prevSelection.ids]
                 : [];
 
+            if (selectedIds.length > 0 && sdk.Editing && typeof sdk.Editing.setSelection === 'function') {
+                sdk.Editing.setSelection({ ids: [] });
+            }
+
             sdk.Settings.setUserSettings({ isImperial: useImperial });
 
             if (selectedIds.length > 0 && sdk.Editing && typeof sdk.Editing.setSelection === 'function') {
-                sdk.Editing.setSelection({ ids: [] });
-                setTimeout(() => {
+                if (reselectTimer) {
+                    clearTimeout(reselectTimer);
+                }
+                reselectTimer = setTimeout(() => {
+                    reselectTimer = null;
                     try {
                         sdk.Editing.setSelection({ ids: selectedIds });
                     } catch (_) {}
-                }, 50);
+                }, 150);
             }
 
             const unitLabel = useImperial ? 'Imperial (ft/mi)' : 'Metric (m/km)';
@@ -997,6 +1007,10 @@
             updateStatusBanner(countryName, useImperial);
         } catch (err) {
             console.error(`${getDisplayName()}: Failed to switch units.`, err);
+        } finally {
+            setTimeout(() => {
+                isSwitchingUnits = false;
+            }, 200);
         }
     }
 
