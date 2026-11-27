@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.12-beta.1
+// @version      1.0.12-beta.2
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -20,7 +20,7 @@
 
     const SCRIPT_ID = "WME AUS";
     const SCRIPT_NAME = "WME Auto Unit Switcher";
-    const updateMessage = "";
+    const updateMessage = "Fix bug where speed limit would be changed.";
     const USERSCRIPT_URL = "https://greasyfork.org/en/scripts/607137-wme-auto-unit-switcher";
 
     const STORAGE_KEY = 'wme_auto_unit_switcher_country_rules_v2';
@@ -30,10 +30,8 @@
     const LEGACY_V1_STORAGE_KEY = 'wme_auto_unit_switcher_country_rules';
     const LEGACY_UK_HYBRID_KEY = 'wme_auto_unit_switcher_uk_hybrid';
 
-    // Specific target selectors for measure/subhead, geometry dropdowns, and segment lengths
     const TARGET_ELEMENT_SELECTORS = [
         'wz-subhead3',
-        '.selected-value',
         '.length-attribute .value'
     ].join(',');
 
@@ -976,7 +974,23 @@
                 document.activeElement.blur();
             }
 
+            const prevSelection = sdk && sdk.Editing && sdk.Editing.getSelection
+                ? sdk.Editing.getSelection()
+                : null;
+            const selectedIds = prevSelection && Array.isArray(prevSelection.ids)
+                ? [...prevSelection.ids]
+                : [];
+
             sdk.Settings.setUserSettings({ isImperial: useImperial });
+
+            if (selectedIds.length > 0 && sdk.Editing && typeof sdk.Editing.setSelection === 'function') {
+                sdk.Editing.setSelection({ ids: [] });
+                setTimeout(() => {
+                    try {
+                        sdk.Editing.setSelection({ ids: selectedIds });
+                    } catch (_) {}
+                }, 50);
+            }
 
             const unitLabel = useImperial ? 'Imperial (ft/mi)' : 'Metric (m/km)';
             console.log(`${getDisplayName()}: Switched to ${unitLabel} for ${countryName}.`);
