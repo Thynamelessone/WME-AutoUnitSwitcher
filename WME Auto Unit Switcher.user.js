@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WME Auto Unit Switcher
 // @namespace    https://github.com/
-// @version      1.0.10
+// @version      1.0.12
 // @description  Automatically switches WME units between Metric and Imperial.
 // @author       Thynamelessone
 // @match        https://www.waze.com/*editor*
@@ -20,7 +20,7 @@
 
     const SCRIPT_ID = "WME AUS";
     const SCRIPT_NAME = "WME Auto Unit Switcher";
-    const updateMessage = "";
+    const updateMessage = "Fix bug where speed limit may be changed upon unit switch.";
     const USERSCRIPT_URL = "https://greasyfork.org/en/scripts/607137-wme-auto-unit-switcher";
 
     const STORAGE_KEY = 'wme_auto_unit_switcher_country_rules_v2';
@@ -64,6 +64,9 @@
     let lastCountryId = null;
     let activeCountryId = null;
     let multiUnitObserverInitialized = false;
+    let permalinkGuardTimer = null;
+    let reselectTimer = null;
+    let isSwitchingUnits = false;
     const observedShadowRoots = new WeakSet();
 
     function getDisplayName() {
@@ -452,6 +455,8 @@
         onMapUpdate();
         console.log(`${displayName}: Initialized with WME SDK.`);
     }
+
+    // --- Targeted Multi-Unit Conversion (wz-subhead3, .length-attribute .value) ---
 
     function formatNumber(val) {
         return val >= 100
@@ -906,6 +911,15 @@
 
     // --- Core Unit Switching Logic (SDK) ---
 
+    function hasSelectedSegments() {
+        try {
+            const sel = sdk && sdk.Editing && sdk.Editing.getSelection ? sdk.Editing.getSelection() : null;
+            return Boolean(sel && Array.isArray(sel.ids) && sel.ids.length > 0);
+        } catch (_) {
+            return false;
+        }
+    }
+
     function onMapUpdate() {
         cacheLoadedCountryNames();
         checkAndSetUnits();
@@ -914,7 +928,7 @@
     }
 
     function checkAndSetUnits(force = false) {
-        if (!sdk) return;
+        if (!sdk || isSwitchingUnits) return;
 
         const topCountry = sdk.DataModel.Countries.getTopCountry();
         if (!topCountry) return;
@@ -928,23 +942,57 @@
             clearMultiUnitNodes();
         }
 
-        if (!force && countryId === lastCountryId) return;
-        lastCountryId = countryId;
-
         const rule = getRuleForCountry(countryId);
         const shouldBeImperial = rule.unit === 'imperial';
         const prefs = sdk.Settings.getUserSettings();
         const isCurrentlyImperial = Boolean(prefs && prefs.isImperial);
+        const targetRadioId = shouldBeImperial ? 'prefs-unit-imperial' : 'prefs-unit-metric';
+        const targetRadio = document.getElementById(targetRadioId);
+        const domOutOfSync = Boolean(targetRadio && !targetRadio.checked);
+        const needsSwitch = (shouldBeImperial !== isCurrentlyImperial) || domOutOfSync;
 
-        if (shouldBeImperial !== isCurrentlyImperial) {
-            setWMEUnits(shouldBeImperial, topCountry.name);
-        } else {
+        if (!needsSwitch) {
             updateStatusBanner(topCountry.name, shouldBeImperial);
+            return;
         }
+
+        if (!force && countryId === lastCountryId && !domOutOfSync) {
+            return;
+        }
+
+        // If a permalink opened with a segment already selected, let WME finish initial selection mount first
+        if (!force && lastCountryId === null && hasSelectedSegments()) {
+            if (!permalinkGuardTimer) {
+                permalinkGuardTimer = setTimeout(() => {
+                    permalinkGuardTimer = null;
+                    checkAndSetUnits(true);
+                }, 400);
+            }
+            return;
+        }
+
+        lastCountryId = countryId;
+        setWMEUnits(shouldBeImperial, topCountry.name);
     }
 
     function setWMEUnits(useImperial, countryName) {
+        isSwitchingUnits = true;
         try {
+            if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                document.activeElement.blur();
+            }
+
+            const prevSelection = sdk && sdk.Editing && sdk.Editing.getSelection
+                ? sdk.Editing.getSelection()
+                : null;
+            const selectedIds = prevSelection && Array.isArray(prevSelection.ids)
+                ? [...prevSelection.ids]
+                : [];
+
+            if (selectedIds.length > 0 && sdk.Editing && typeof sdk.Editing.setSelection === 'function') {
+                sdk.Editing.setSelection({ ids: [] });
+            }
+
             sdk.Settings.setUserSettings({ isImperial: useImperial });
 
             const targetId = useImperial ? 'prefs-unit-imperial' : 'prefs-unit-metric';
@@ -953,11 +1001,27 @@
                 radioBtn.click();
             }
 
+            if (selectedIds.length > 0 && sdk.Editing && typeof sdk.Editing.setSelection === 'function') {
+                if (reselectTimer) {
+                    clearTimeout(reselectTimer);
+                }
+                reselectTimer = setTimeout(() => {
+                    reselectTimer = null;
+                    try {
+                        sdk.Editing.setSelection({ ids: selectedIds });
+                    } catch (_) {}
+                }, 150);
+            }
+
             const unitLabel = useImperial ? 'Imperial (ft/mi)' : 'Metric (m/km)';
             console.log(`${getDisplayName()}: Switched to ${unitLabel} for ${countryName}.`);
             updateStatusBanner(countryName, useImperial);
         } catch (err) {
             console.error(`${getDisplayName()}: Failed to switch units.`, err);
+        } finally {
+            setTimeout(() => {
+                isSwitchingUnits = false;
+            }, 200);
         }
     }
 
